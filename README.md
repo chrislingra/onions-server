@@ -16,7 +16,7 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    Every decision on the way is the same simple numbered choice.
 4. **Distribution families** debian (Ubuntu, Debian), rhel (RHEL, Rocky, Alma, Fedora),
    suse (SLES, openSUSE Leap) behind `lib/os.sh`. A distribution the installer has not
-   been proven on says so and asks before it starts (see *Proving a run*).
+   been proven on is installed the same way; the banner and the log say so (see *Proving a run*).
 5. **Two kinds of users.** The **bootstrap user** `manager` (fixed name, step 1) makes the
    delivered state work: sudo, docker, a generated one-time password shown once on the
    console and expired on purpose. It owns nothing -- platform directories belong to
