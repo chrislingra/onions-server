@@ -69,6 +69,12 @@ check "is_domain rejects"       bash -c '. "$0/lib/checklist.sh"; ! is_domain "o
 check "is_email ok"             is_email chris@example.org
 check "is_email rejects"        bash -c '. "$0/lib/checklist.sh"; ! is_email "chris@"' "$ROOT"
 check "is_pubkey ed25519"       is_pubkey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxxxx comment"
+check "is_pubkey_or_dash dash"  is_pubkey_or_dash -
+_t_pod() { ! is_pubkey_or_dash "nonsense"; }
+check "is_pubkey_or_dash rejects" _t_pod
+check "KEY_SOURCE generate valid" _item_valid KEY_SOURCE generate
+_t_ks() { ! _item_valid KEY_SOURCE upload; }
+check "KEY_SOURCE rejects"      _t_ks
 check "is_pubkey path"          bash -c 'echo "ssh-ed25519 AAAA x" > "$1/k.pub"; . "$2/lib/checklist.sh"; is_pubkey "$1/k.pub"' _ "$TMP" "$ROOT"
 check "option_valid"            option_valid "a=A;b=B" b
 _t_opt_bad() { ! option_valid "a=A;b=B" c; }

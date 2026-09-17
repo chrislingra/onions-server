@@ -21,9 +21,10 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    delivered state work: sudo, docker, a generated one-time password shown once on the
    console and expired on purpose. It owns nothing -- platform directories belong to
    `root:onions`, the platform group every admin is in. **Personal admins** (step 3, as
-   many as needed) come each with their own SSH key; without a key there is no user,
-   because the hardening turns password login off -- and only after a key login was
-   proven in a second session. **Step 8 removes the bootstrap user** once a personal admin
+   many as needed) get their SSH key one of three ways: pasted, generated on the server
+   (handed out once, deleted after the proven login), or none yet -- then password login
+   stays on and the hardening waits. The hardening turns password login off only after a
+   key login was proven in a second session. **Step 8 removes the bootstrap user** once a personal admin
    with sudo and key exists, sshd is hardened and the user owns no files.
 6. **Handover**: step 7 pulls the Toolserver from Git and runs its own
    `scripts/setup-toolserver.sh`. From then on the Toolserver manages the host
@@ -69,7 +70,7 @@ lib/checklist.sh        the checklist items, validation, site.env
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
 checklist/PREPARATION.md what to have ready
-tests/selftest.sh       96 checks without root (syntax, detection, checklist, prompts, ...)
+tests/selftest.sh       100 checks without root (syntax, detection, checklist, prompts, ...)
 .instance               the domain of this host (gitignored)
 src/                    Toolserver checkout for step 7 (gitignored)
 

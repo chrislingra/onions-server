@@ -12,7 +12,8 @@ CHECKLIST_ITEMS=(
     "LANGUAGE|Language of the system|de|is_nonempty|de=German;en=English (US);gb=English (UK);fr=French;it=Italian;es=Spanish;nl=Dutch;pl=Polish;pt=Portuguese"
     "COUNTRY|Country (sets time zone and keyboard)|DE|is_nonempty|DE=Germany;AT=Austria;CH=Switzerland;NL=Netherlands;BE=Belgium;FR=France;IT=Italy;ES=Spain;PL=Poland;PT=Portugal;GB=United Kingdom;US=United States"
     "ADMIN_USER|First personal admin (Linux user name; not the bootstrap user)||is_personal_user"
-    "ADMIN_SSH_PUBKEY|Public SSH key of that admin (one line, or a path to a .pub file)||is_pubkey"
+    "KEY_SOURCE|SSH key of that admin|paste|is_nonempty|paste=I have a public key (pasted, or a path to a .pub file);generate=Generate a key pair on this server (the private key is handed out once);none=No key yet (password login stays on until a key exists)"
+    "ADMIN_SSH_PUBKEY|Public SSH key of that admin (one line, or a path to a .pub file; - = none)|-|is_pubkey_or_dash"
     "ACME_EMAIL|E-mail for Let's Encrypt (expiry notices)||is_email"
     "ACME_MODE|Let's Encrypt certificates|production|is_nonempty|production=Production (real certificates);staging=Staging (test certificates, no rate limits)"
     "TRAEFIK_IMAGE|Traefik image|traefik:v3|is_nonempty"
@@ -46,6 +47,7 @@ is_username()  { [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; }
 is_personal_user() { is_username "$1" && [[ "$1" != "${BOOTSTRAP_USER:-manager}" && "$1" != "root" ]]; }
 is_email()     { [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
 is_pubkey()    { [[ "$1" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+)[[:space:]]+[A-Za-z0-9+/=]+ ]] || [[ -r "$1" && "$1" == *.pub ]]; }
+is_pubkey_or_dash() { [[ "$1" == "-" ]] || is_pubkey "$1"; }
 
 # option_valid "options" code -> the code is one of the options
 option_valid() { [[ ";$1;" == *";$2="* ]]; }

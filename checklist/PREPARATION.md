@@ -16,10 +16,13 @@ passwords are never stored -- have them at hand.
    password shown on the console (write it down, it must be changed at first login).
    It is the working login of the delivered state and disappears in step 8.
 5. **Personal admins** -- for every person who will administer the host: the Linux user
-   name and an **SSH key pair generated on their workstation** (`ssh-keygen -t ed25519`).
-   The public key (`.pub`, one line) is what the installer asks for; the private key
-   stays with the person. **No key, no user**: step 3 turns password login off, so a
-   user without a key would be locked out. Optional: a password, so `sudo` can ask for it.
+   name and, best, an **SSH key pair generated on their workstation** (`ssh-keygen -t
+   ed25519`; on Windows in PowerShell, or PuTTYgen). The public key (`.pub`, one line) is
+   what the installer asks for. No key at hand? Step 3 offers two more ways: **generate**
+   the pair on the server (the private key is shown once and can be fetched with WinSCP as
+   `manager`; it is deleted from the server after the key login was proven), or **none
+   yet** (password login stays on, the hardening and the removal of `manager` wait until a
+   key exists). Optional: a password, so `sudo` can ask for it.
 6. **Let's Encrypt** -- the e-mail for expiry notices, and whether to start with
    `staging` (test certificates, no rate limits) or `production`.
 7. **GitHub access for step 7** -- `onions-server` is public and clones without a key.
