@@ -3,21 +3,76 @@
 # The SMTP password is asked hidden and written only to /etc/msmtprc (mode 600, root).
 # Sourced by install.sh.
 
-STEP_60_TITLE="Hardening (mail relay, CrowdSec, rkhunter, Docker Scout)"
+STEP_60_TITLE="Hardening (mail relay, CrowdSec, automatic security updates)"
 
+# The recommended set (operator 2026-09-17): mail relay, CrowdSec, automatic security
+# updates. rkhunter and Docker Scout stay available as extras, not in the set.
 step_60_run() {
     heading "$STEP_60_TITLE"
-    local parts=("Mail relay (msmtp)" "CrowdSec + firewall bouncer" "rkhunter with daily report" "Docker Scout for the admin user" "All four")
-    local pick; pick="$(choose "Which part" "${parts[@]}")"
+    local pick
+    pick_option pick "Which part" set \
+        "set=Recommended set: mail relay, CrowdSec, automatic security updates;mail=Mail relay only;crowdsec=CrowdSec only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back"
     case "$pick" in
-        0) return 0 ;;
-        1) _hard_mail ;;
-        2) _hard_crowdsec ;;
-        3) _hard_rkhunter ;;
-        4) _hard_scout ;;
-        5) _hard_mail && _hard_crowdsec && _hard_rkhunter && _hard_scout ;;
+        set)         _hard_mail && _hard_crowdsec && _hard_autoupdates ;;
+        mail)        _hard_mail ;;
+        crowdsec)    _hard_crowdsec ;;
+        updates)     _hard_autoupdates ;;
+        rkhunter)    _hard_rkhunter ;;
+        scout)       _hard_scout ;;
+        rkhunter_off) _hard_rkhunter_off ;;
+        back)        return 0 ;;
     esac
     step_done 60
+}
+
+# Automatic security updates: unattended-upgrades (debian), dnf-automatic (rhel),
+# os-update timer (suse). Reports go through the mail relay when it exists.
+_hard_autoupdates() {
+    heading "Automatic security updates"
+    checklist_require NOTIFICATION_EMAIL
+    case "$OS_FAMILY" in
+        debian)
+            pkg_install unattended-upgrades
+            cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+            cat > /etc/apt/apt.conf.d/52onions-unattended <<EOF
+// onions-server, step 6: security updates apply themselves; a report is mailed on change
+Unattended-Upgrade::Mail "$NOTIFICATION_EMAIL";
+Unattended-Upgrade::MailReport "on-change";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+            svc_enable_now unattended-upgrades
+            unattended-upgrade --dry-run >/dev/null 2>&1 && log_ok "unattended-upgrades active (security origins, no automatic reboot)." \
+                || log_warn "unattended-upgrades installed, but the dry run reported a problem -- see /var/log/unattended-upgrades/"
+            ;;
+        rhel)
+            pkg_install dnf-automatic
+            backup_file /etc/dnf/automatic.conf
+            sed -i -E 's/^upgrade_type *=.*/upgrade_type = security/; s/^apply_updates *=.*/apply_updates = yes/; s/^emit_via *=.*/emit_via = stdio,email/; s/^email_to *=.*/email_to = '"$NOTIFICATION_EMAIL"'/' /etc/dnf/automatic.conf
+            svc_enable_now dnf-automatic.timer
+            log_ok "dnf-automatic: security updates apply daily, report to $NOTIFICATION_EMAIL."
+            ;;
+        suse)
+            pkg_install os-update
+            svc_enable_now os-update.timer
+            log_ok "os-update timer active (zypper patch, daily)."
+            ;;
+    esac
+}
+
+_hard_rkhunter_off() {
+    heading "Remove rkhunter"
+    if pkg_installed rkhunter; then
+        pkg_remove rkhunter
+        rm -f /etc/cron.daily/rkhunter
+        log_ok "rkhunter removed, daily job gone."
+    else
+        log_ok "rkhunter is not installed."
+    fi
 }
 
 _hard_mail() {

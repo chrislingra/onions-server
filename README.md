@@ -56,7 +56,7 @@ Menu item `a` runs steps 1-8 in order; every step can also be run alone and repe
 | 3 Personal admins | users with password, sudo, SFTP (`internal-sftp`); SSH keys and hardening optional (else later in the Toolserver) |
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
-| 6 Hardening | mail relay (msmtp), CrowdSec + bouncer, rkhunter daily report, Docker Scout |
+| 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
 | 7 Toolserver | deploy key, clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
