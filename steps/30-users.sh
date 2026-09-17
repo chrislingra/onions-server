@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # steps/30-users.sh -- personal admins, their SSH keys, SFTP, sshd hardening.
 # The bootstrap user is step 1's; this step is about the people. Rules:
-#   * a personal admin gets a key one of three ways: pasted (or a .pub path), generated
-#     here (the private key is handed out once and deleted from the server after the
-#     login was proven), or none yet -- then password login stays on, the hardening waits,
-#     and the bootstrap user stays until a key exists (step 8 checks that)
+#   * SSH keys and hardening are optional here (operator 2026-09-17: "ssh kann uebergangen
+#     werden und in onions nachgeholt werden"): the default is a password now and the SSH
+#     part later in the Toolserver. A key can still be pasted or generated here (the
+#     private key is handed out once and deleted after the proven login).
 #   * the hardening refuses to run until a key login was proven in a second session
 #   * sshd settings go to a drop-in when the main config includes one (Ubuntu 22.04+ ships
 #     50-cloud-init.conf with PasswordAuthentication yes, which a sed on the main file
@@ -27,7 +27,7 @@ step_30_run() {
             is_personal_user "$name" && break
             echo "  '$name' is not allowed (reserved: $BOOTSTRAP_USER, root)."
         done
-        pick_option source "SSH key of $name" paste "paste=I have a public key;generate=Generate a key pair on this server;none=No key yet"
+        pick_option source "SSH access of $name" later "later=Password now, SSH later in the Toolserver;paste=I have a public key;generate=Generate a key pair on this server"
         if [[ "$source" == "paste" ]]; then
             while true; do
                 ask pubkey "Public SSH key of $name (one line, or a path to a .pub file)"
@@ -41,8 +41,7 @@ step_30_run() {
     _sftp_subsystem
 
     if ! _any_admin_with_key; then
-        log_warn "No personal admin has an SSH key yet -- password login stays on, sshd is not hardened."
-        log_warn "Run this step again once a key exists (add it to the checklist, or generate one here)."
+        log_ok "SSH keys and hardening: later, in the Toolserver (Environment > Server-Config). Password login stays on."
         step_done 30
         return 0
     fi
@@ -76,7 +75,7 @@ _any_admin_with_key() {
     return 1
 }
 
-# _personal_user NAME SOURCE(paste|generate|none) PUBKEY SUDO(y|n)
+# _personal_user NAME SOURCE(later|paste|generate) PUBKEY SUDO(y|n)
 _personal_user() {
     local user="$1" source="$2" pubkey="$3" want_sudo="$4"
     if id "$user" >/dev/null 2>&1; then
@@ -84,7 +83,7 @@ _personal_user() {
     else
         run useradd -m -s /bin/bash "$user"
         log_ok "User $user created."
-        if [[ "$source" == "none" ]] || confirm "Set a password for $user (sudo asks for it; login itself is by key)?" y; then
+        if [[ "$source" == "later" ]] || confirm "Set a password for $user (sudo asks for it; login itself is by key)?" y; then
             local pw; ask_secret pw "Password for $user"
             printf '%s:%s\n' "$user" "$pw" | chpasswd; unset pw
         fi
@@ -98,7 +97,7 @@ _personal_user() {
     case "$source" in
         paste)    _install_pubkey "$user" "$(pubkey_text "$pubkey")" ;;
         generate) _generate_key "$user" ;;
-        none)     log_warn "$user has no SSH key -- password login only, until a key is added." ;;
+        later)    log_ok "$user logs in with the password; SSH key and hardening follow in the Toolserver." ;;
     esac
 }
 

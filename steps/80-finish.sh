@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # steps/80-finish.sh -- the last step: the bootstrap user leaves. It was the delivered
 # state's working login; once personal admins exist, are proven and sshd is hardened, it
-# is only an extra door. The step refuses to remove it while any of that is missing, and
-# refuses while the user still owns files (it should own nothing, see steps/10).
+# is only an extra door. The step refuses to remove it while no personal admin can log in
+# with sudo, and while the user still owns files (it should own nothing, see steps/10).
+# sshd hardening is not required here -- it may follow in the Toolserver (operator
+# 2026-09-17); until then password login stays on and the step says so.
 # Sourced by install.sh.
 
 STEP_80_TITLE="Finish (remove the bootstrap user after the checks)"
@@ -16,18 +18,21 @@ step_80_run() {
         step_done 80; return 0
     fi
 
-    # 1. at least one personal admin with sudo and an authorized key
+    # 1. at least one personal admin with sudo who can log in: SSH key, or a usable password
     for u in $(cat "$STATE_DIR/personal_users" 2>/dev/null); do
         id "$u" >/dev/null 2>&1 || continue
         id -nG "$u" | tr ' ' '\n' | grep -qx "$(sudo_group)" || continue
-        [[ -s "$(getent passwd "$u" | cut -d: -f6)/.ssh/authorized_keys" ]] || continue
-        sudo_ok=1; log_ok "Personal admin with sudo and key: $u"
+        if [[ -s "$(getent passwd "$u" | cut -d: -f6)/.ssh/authorized_keys" ]]; then
+            sudo_ok=1; log_ok "Personal admin with sudo and SSH key: $u"
+        elif [[ "$(passwd -S "$u" 2>/dev/null | awk '{print $2}')" == "P" ]]; then
+            sudo_ok=1; log_ok "Personal admin with sudo and password: $u"
+        fi
     done
-    (( sudo_ok )) || { log_err "No personal admin with sudo and an SSH key -- step 3 first."; ok=0; }
+    (( sudo_ok )) || { log_err "No personal admin with sudo who can log in -- step 3 first."; ok=0; }
 
-    # 2. sshd hardened (key only) -- otherwise the bootstrap password is still the easy door
-    if [[ -f "$STATE_DIR/sshd_hardened" ]]; then log_ok "sshd hardened."
-    else log_err "sshd is not hardened yet (step 3, second half)."; ok=0; fi
+    # 2. sshd hardening: not required -- it may follow in the Toolserver
+    if [[ -f "$STATE_DIR/sshd_hardened" ]]; then log_ok "sshd hardened (key only)."
+    else log_warn "sshd is not hardened: password login stays on until the Toolserver does it."; fi
 
     # 3. the user owns nothing outside its home
     local owned; owned="$(find / -xdev \( -path /proc -o -path /sys -o -path "/home/$user" \) -prune -o -user "$user" -print 2>/dev/null | head -20)"

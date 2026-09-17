@@ -12,7 +12,7 @@ CHECKLIST_ITEMS=(
     "LANGUAGE|Language of the system|de|is_nonempty|de=German;en=English (US);gb=English (UK);fr=French;it=Italian;es=Spanish;nl=Dutch;pl=Polish;pt=Portuguese"
     "COUNTRY|Country (sets time zone and keyboard)|DE|is_nonempty|DE=Germany;AT=Austria;CH=Switzerland;NL=Netherlands;BE=Belgium;FR=France;IT=Italy;ES=Spain;PL=Poland;PT=Portugal;GB=United Kingdom;US=United States"
     "ADMIN_USER|First personal admin (Linux user name; not the bootstrap user)||is_personal_user"
-    "KEY_SOURCE|SSH key of that admin|paste|is_nonempty|paste=I have a public key (pasted, or a path to a .pub file);generate=Generate a key pair on this server (the private key is handed out once);none=No key yet (password login stays on until a key exists)"
+    "KEY_SOURCE|SSH access of that admin|later|is_nonempty|later=Password now; SSH keys and hardening later in the Toolserver;paste=I have a public key (pasted, or a path to a .pub file);generate=Generate a key pair on this server (the private key is handed out once)"
     "ADMIN_SSH_PUBKEY|Public SSH key of that admin (one line, or a path to a .pub file; - = none)|-|is_pubkey_or_dash"
     "ACME_EMAIL|E-mail for Let's Encrypt (expiry notices)||is_email"
     "ACME_MODE|Let's Encrypt certificates|production|is_nonempty|production=Production (real certificates);staging=Staging (test certificates, no rate limits)"

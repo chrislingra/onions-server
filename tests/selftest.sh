@@ -73,6 +73,9 @@ check "is_pubkey_or_dash dash"  is_pubkey_or_dash -
 _t_pod() { ! is_pubkey_or_dash "nonsense"; }
 check "is_pubkey_or_dash rejects" _t_pod
 check "KEY_SOURCE generate valid" _item_valid KEY_SOURCE generate
+check "KEY_SOURCE later valid"   _item_valid KEY_SOURCE later
+_t_ks_none() { ! _item_valid KEY_SOURCE none; }
+check "KEY_SOURCE none gone"    _t_ks_none
 _t_ks() { ! _item_valid KEY_SOURCE upload; }
 check "KEY_SOURCE rejects"      _t_ks
 check "is_pubkey path"          bash -c 'echo "ssh-ed25519 AAAA x" > "$1/k.pub"; . "$2/lib/checklist.sh"; is_pubkey "$1/k.pub"' _ "$TMP" "$ROOT"
