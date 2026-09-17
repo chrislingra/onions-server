@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # steps/60-hardening.sh -- mail relay, CrowdSec, rkhunter, Docker Scout.
-# Origin: harden-system.sh options 2-5 (option 6, the firewall, lives in steps/20).
-# Differences on purpose: msmtp instead of ssmtp (ssmtp left Debian 12 / Ubuntu 24.04);
-# the SMTP password is asked hidden and written only to /etc/msmtprc (mode 600, root).
+# The SMTP password is asked hidden and written only to /etc/msmtprc (mode 600, root).
 # Sourced by install.sh.
 
 STEP_60_TITLE="Hardening (mail relay, CrowdSec, rkhunter, Docker Scout)"

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# steps/20-firewall.sh -- the one firewall baseline (prepare-system.sh and harden-system.sh
-# each set it separately; this is the single copy). Sourced by install.sh.
+# steps/20-firewall.sh -- the firewall baseline. Sourced by install.sh.
 
 STEP_20_TITLE="Firewall (deny in, allow 22/80/443, submission out, no direct SMTP)"
 

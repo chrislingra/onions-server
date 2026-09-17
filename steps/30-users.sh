@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # steps/30-users.sh -- personal admins (each with their own SSH key), SFTP, sshd hardening.
-# Origin: user-security.sh (key, sudo, sshd). The bootstrap user is step 1's; this step is
-# about the people. Differences to the origin, on purpose:
+# The bootstrap user is step 1's; this step is about the people. Rules:
 #   * every personal user brings a public key -- no key, no user (the hardening below turns
 #     password login off, and a user without a key would be locked out with it)
 #   * the hardening refuses to run until a key login was proven in a second session

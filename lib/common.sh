@@ -33,21 +33,23 @@ require_root() {
     [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Run this as root: sudo bash $0"
 }
 
-# --- prompts -----------------------------------------------------------------------------
-# confirm "Question?" [y|n]  -> returns 0 for yes. Default shown in capitals.
+# --- prompts: every decision is the same simple numbered choice ---------------------------
+# confirm "Question?" [y|n]  -> returns 0 for yes. Enter takes the default.
 confirm() {
-    local question="$1" default="${2:-n}" reply
-    local hint="y/N"; [[ "$default" == "y" ]] && hint="Y/n"
-    read -r -p "$question [$hint] " reply
-    reply="${reply:-$default}"
-    [[ "$reply" =~ ^[Yy]$ ]]
-}
-
-# confirm_word "Question" WORD -> the operator must type WORD exactly (for dangerous steps).
-confirm_word() {
-    local question="$1" word="$2" reply
-    read -r -p "$question (type $word to continue) " reply
-    [[ "$reply" == "$word" ]]
+    local question="$1" default="${2:-n}" reply dflt=2
+    [[ "$default" == "y" ]] && dflt=1
+    echo "$question"
+    echo "  1) Yes"
+    echo "  2) No"
+    while true; do
+        read -r -p "Choice [$dflt]: " reply
+        reply="${reply:-$dflt}"
+        case "$reply" in
+            1|y|Y|j|J) return 0 ;;
+            2|n|N)     return 1 ;;
+        esac
+        echo "  Enter 1 or 2."
+    done
 }
 
 # ask VAR "Prompt" [default] -> reads into VAR, keeps default on empty input.
@@ -82,7 +84,7 @@ ask_secret() {
 }
 
 # choose "Prompt" item1 item2 ... -> prints the chosen 1-based index, 0 for cancel.
-# Never crashes on non-numeric input (the old scripts died on that under set -e).
+# Never crashes on non-numeric input.
 choose() {
     local prompt="$1"; shift
     local items=("$@") i reply

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# steps/40-docker.sh -- Docker Engine + Compose v2 plugin. Origin: prepare-system.sh step 2.
-# Compose v1 (the separate docker-compose binary) is not installed any more: every script
-# on the host uses "docker compose". Sourced by install.sh.
+# steps/40-docker.sh -- Docker Engine + Compose v2 plugin ("docker compose"; no Compose v1
+# binary). Sourced by install.sh.
 
 STEP_40_TITLE="Docker Engine and Compose plugin"
 

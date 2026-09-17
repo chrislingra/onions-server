@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # steps/50-traefik.sh -- the reverse proxy in /opt/traefik, from the templates in
-# templates/. Origin: prepare-system.sh step 3, compared against the live /opt/traefik
-# (2026-09-17: production Let's Encrypt, dashboard behind basic auth). Sourced by install.sh.
+# templates/ (production Let's Encrypt by default, dashboard behind basic auth).
+# Sourced by install.sh.
 
 STEP_50_TITLE="Traefik reverse proxy (/opt/traefik)"
 

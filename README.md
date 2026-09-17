@@ -1,9 +1,7 @@
 # onions-server
 
 The base installation of a fresh Linux host for the onions.one platform -- menu-driven,
-from the empty machine up to the point where the **Toolserver** takes over. It replaces
-the hand-run scripts `prepare-system.sh`, `harden-system.sh`, `user-security.sh` and
-`setup-utf8.sh` that grew in `/opt/onions.one` over the years.
+from the empty machine up to the point where the **Toolserver** takes over.
 
 Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1-K7):
 
@@ -15,9 +13,10 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    markers, backups, logs. A fresh machine has none of these directories; the installer
    makes them.
 3. **Menu-driven**: `install.sh` shows the eight steps with their state; no parameters.
+   Every decision on the way is the same simple numbered choice.
 4. **Distribution families** debian (Ubuntu, Debian), rhel (RHEL, Rocky, Alma, Fedora),
    suse (SLES, openSUSE Leap) behind `lib/os.sh`. A distribution the installer has not
-   been proven on says so and asks for a typed `YES` (see *Proving a run*).
+   been proven on says so and asks before it starts (see *Proving a run*).
 5. **Two kinds of users.** The **bootstrap user** `manager` (fixed name, step 1) makes the
    delivered state work: sudo, docker, a generated one-time password shown once on the
    console and expired on purpose. It owns nothing -- platform directories belong to
@@ -39,9 +38,9 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
 ## Quick start on a fresh machine
 
 ```bash
-# 1. git, then this repository (private: the deploy key of the machine must be registered)
+# 1. git, then this repository (public -- no key needed for this clone)
 apt-get install -y git            # dnf install git / zypper install git
-git clone git@github.com:chrislingra/onions-server.git /opt/onions-server
+git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
 
 # 2. the menu -- asks the domain, creates /opt/<domain>, shows the steps
 cd /opt/onions-server && sudo bash install.sh
@@ -49,16 +48,16 @@ cd /opt/onions-server && sudo bash install.sh
 
 Menu item `a` runs steps 1-8 in order; every step can also be run alone and repeated.
 
-| Step | Does | Origin |
-|---|---|---|
-| 1 Base system | update, base packages, snapd off (Ubuntu), locale, time zone, group `onions`, bootstrap user `manager` | prepare-system.sh, setup-utf8.sh |
-| 2 Firewall | deny in; 22/80/443 in; 587 out; 25/465 out blocked | prepare-system.sh, harden-system.sh |
-| 3 Personal admins | users with SSH keys, sudo, SFTP (`internal-sftp`), sshd hardening behind a proof | user-security.sh |
-| 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` | prepare-system.sh |
-| 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth | prepare-system.sh, live /opt/traefik |
-| 6 Hardening | mail relay (msmtp), CrowdSec + bouncer, rkhunter daily report, Docker Scout | harden-system.sh |
-| 7 Toolserver | deploy key, clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover | setup-toolserver.sh (Toolserver repo) |
-| 8 Finish | removes the bootstrap user after the checks | new |
+| Step | Does |
+|---|---|
+| 1 Base system | update, base packages, snapd off (Ubuntu), locale, time zone, group `onions`, bootstrap user `manager` |
+| 2 Firewall | deny in; 22/80/443 in; 587 out; 25/465 out blocked |
+| 3 Personal admins | users with SSH keys, sudo, SFTP (`internal-sftp`), sshd hardening behind a proof |
+| 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
+| 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
+| 6 Hardening | mail relay (msmtp), CrowdSec + bouncer, rkhunter daily report, Docker Scout |
+| 7 Toolserver | deploy key, clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover |
+| 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout
 
@@ -76,25 +75,6 @@ src/                    Toolserver checkout for step 7 (gitignored)
 
 /opt/<domain>/          the instance: site.env, state/ (markers, backups), logs/
 ```
-
-## What changed against the old scripts
-
-1. No plaintext password (prepare-system.sh had one for the admin user and the pipelines
-   API; harden-system.sh wrote the SMTP password into ssmtp.conf). The bootstrap password
-   is generated per host, shown once, expired at once.
-2. One way to reach `/opt` for admins -- the group `onions` on setgid directories --
-   instead of three (`chown -R`, user ACL, group ACL) that fought each other and changed
-   the owner of container volumes.
-3. `ssmtp` → `msmtp` (ssmtp is not in Debian 12 / Ubuntu 24.04 any more).
-4. No Compose v1 binary; everything uses `docker compose`.
-5. sshd: settings land in `/etc/ssh/sshd_config.d/10-onions.conf` when the main file has
-   an `Include`, so cloud-init's `PasswordAuthentication yes` no longer wins; the old
-   `sed` on the main file never saw that drop-in. `AllowUsers` is not set (it made
-   toggle-root.sh ineffective).
-6. Traefik image pinned to `traefik:v3` by default (the host runs `latest`); dashboard
-   password hashed with `openssl passwd -apr1`, no apache2-utils needed.
-7. Every step runs as its own bash process: `set -e` is ignored inside a menu loop, and
-   the old menus died on a single non-numeric key.
 
 ## Proving a run
 

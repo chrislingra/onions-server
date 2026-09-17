@@ -6,7 +6,7 @@
 #           | suse (SLES, openSUSE Leap)
 
 # MEASURED: distributions this installer has run through completely, with the date and
-# the version it was proven on. Anything not listed here asks the operator to type YES
+# the version it was proven on. Anything not listed here asks the operator to confirm
 # before it starts -- the code path exists, but nobody has watched it succeed yet.
 # Add a line only after a full run on a fresh machine (README, section "Proving a run").
 declare -A OS_MEASURED=(
@@ -109,7 +109,7 @@ fw_install() {
 }
 
 # fw_baseline: deny incoming, allow outgoing, open 22/80/443, submission (587) out,
-# block direct SMTP out (25, 465) -- exactly what prepare-system.sh + harden-system.sh set.
+# block direct SMTP out (25, 465).
 fw_baseline() {
     case "$OS_FAMILY" in
         debian)
@@ -185,7 +185,17 @@ locale_set() {
         suse) pkg_install glibc-locale ;;
     esac
     run localectl set-locale "LANG=${locale}"
-    run localectl set-keymap "$keymap"
+    case "$OS_FAMILY" in
+        debian)
+            # localectl set-keymap is refused on Debian/Ubuntu ("not supported in Debian");
+            # the keymap lives in /etc/default/keyboard and console-setup applies it
+            pkg_install console-setup keyboard-configuration
+            set_env_line /etc/default/keyboard XKBLAYOUT "\"$keymap\""
+            DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive keyboard-configuration >/dev/null 2>&1 || true
+            command -v setupcon >/dev/null && setupcon --save-only >/dev/null 2>&1 || true
+            ;;
+        *) run localectl set-keymap "$keymap" ;;
+    esac
     run timedatectl set-timezone "$timezone"
 }
 

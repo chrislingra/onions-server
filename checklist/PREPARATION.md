@@ -22,11 +22,10 @@ passwords are never stored -- have them at hand.
    user without a key would be locked out. Optional: a password, so `sudo` can ask for it.
 6. **Let's Encrypt** -- the e-mail for expiry notices, and whether to start with
    `staging` (test certificates, no rate limits) or `production`.
-7. **GitHub deploy key** -- both repositories are private. Generate the machine's key
-   (`ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519 -N ""`) and register the public
-   half under *repository > Settings > Deploy keys* (read-only) for `onions-server`
-   (needed for the clone) and `onions-toolserver` (needed by step 7; step 7 shows the key
-   again if access is missing).
+7. **GitHub deploy key** -- `onions-server` is public and clones without a key. The
+   Toolserver repository is private: step 7 generates the machine's key, shows it, and
+   waits until it is registered under *onions-toolserver > Settings > Deploy keys*
+   (read-only). Have GitHub access ready when you reach that step.
 8. **Mail relay** -- SMTP host, port (587), user name and password of the account the
    server sends from (e.g. an Ionos mailbox), the sender address and the address that
    receives notifications.
@@ -35,6 +34,6 @@ passwords are never stored -- have them at hand.
     into `/opt/toolserver/secrets/`. The menu password is printed once at the end of
     step 7; write it down.
 
-Order on the machine (README has the commands): install `git` → deploy key → clone this
+Order on the machine (README has the commands): install `git` → clone this
 repository to `/opt/onions-server` → `sudo bash install.sh` → domain → menu item `a`
 (all steps), or 1-8 one by one.

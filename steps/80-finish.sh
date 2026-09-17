@@ -48,7 +48,7 @@ step_80_run() {
     (( ok )) || { log_err "Not removed. Fix the points above."; return 1; }
 
     log_warn "Removing $user with its home directory. Its sessions end now."
-    confirm_word "Remove bootstrap user $user?" YES || return 1
+    confirm "Remove bootstrap user $user now?" n || return 1
     pkill -KILL -u "$user" 2>/dev/null || true
     run userdel -r "$user"
     rm -f "/etc/sudoers.d/$user"

@@ -96,8 +96,10 @@ check "choose survives bad input" [ "$out" = "2" ]
 out="$(printf '\n' | { ask v "Q" dflt; echo "$v"; })"
 check "ask keeps default"        [ "$out" = "dflt" ]
 check "confirm default n"        bash -c '. "$0/lib/common.sh"; ! confirm "Q?" n < /dev/null' "$ROOT"
-check "confirm_word exact"       bash -c '. "$0/lib/common.sh"; printf "YES\n" | confirm_word "Q?" YES' "$ROOT"
-check "confirm_word rejects"     bash -c '. "$0/lib/common.sh"; ! printf "yes\n" | confirm_word "Q?" YES' "$ROOT"
+check "confirm 1 = yes"          bash -c '. "$0/lib/common.sh"; printf "1\n" | confirm "Q?" n' "$ROOT"
+check "confirm 2 = no"           bash -c '. "$0/lib/common.sh"; ! printf "2\n" | confirm "Q?" y' "$ROOT"
+check "confirm enter = default y" bash -c '. "$0/lib/common.sh"; printf "\n" | confirm "Q?" y' "$ROOT"
+check "confirm survives bad input" bash -c '. "$0/lib/common.sh"; printf "x\n7\n1\n" | confirm "Q?" n' "$ROOT"
 
 echo "== config editing"
 printf '# PermitRootLogin prohibit-password\nPasswordAuthentication yes\nSubsystem sftp /usr/lib/openssh/sftp-server\n' > "$TMP/sshd"

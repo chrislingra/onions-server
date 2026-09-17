@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # steps/10-base.sh -- system update, base packages, locale and time zone, the platform
 # group and the bootstrap user.
-# Origin: prepare-system.sh step 1 + 2 (user), setup-utf8.sh. Sourced by install.sh.
+# Sourced by install.sh.
 #
 # The bootstrap user ($BOOTSTRAP_USER, fixed name) is what makes the delivered state work:
 # sudo, docker, member of the platform group, a generated password shown ONCE on the console
@@ -22,7 +22,7 @@ step_10_run() {
     pkg_install curl ca-certificates gnupg git openssl acl jq rsync "$(pkg_name cron)"
 
     if [[ "$OS_ID" == "ubuntu" ]] && pkg_installed snapd; then
-        if confirm "Remove snapd (saves memory; prepare-system.sh always did this)?" y; then
+        if confirm "Remove snapd?" y; then
             systemctl disable --now snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 || true
             pkg_remove snapd
             rm -rf /root/snap /var/cache/snapd /var/lib/snapd

@@ -142,7 +142,7 @@ main() {
         banner
         log_warn "This installer has never run through on $(os_key)."
         log_warn "The commands for the $OS_FAMILY family exist, but nobody has watched them succeed."
-        confirm_word "Continue anyway?" YES || exit 0
+        confirm "Continue anyway?" n || exit 0
     fi
     main_menu
 }
