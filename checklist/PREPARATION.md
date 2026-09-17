@@ -29,7 +29,7 @@ passwords are never stored -- have them at hand.
 8. **Mail relay** -- SMTP host, port (587), user name and password of the account the
    server sends from (e.g. an Ionos mailbox), the sender address and the address that
    receives notifications.
-9. **Locale, keymap, time zone** -- defaults `de_DE.UTF-8`, `de`, `Europe/Berlin`.
+9. **Language and country** -- two choices from a list; they set locale, time zone and keyboard.
 10. **Toolserver secrets** -- nothing to prepare: `setup-toolserver.sh` generates them
     into `/opt/toolserver/secrets/`. The menu password is printed once at the end of
     step 7; write it down.

@@ -137,13 +137,8 @@ main() {
         "step_${ONIONS_STEP}_run"
         exit $?
     fi
-    log_info "onions-server started on $OS_PRETTY, code $INSTALL_ROOT, instance $INSTANCE_DIR"
-    if ! os_measured; then
-        banner
-        log_warn "This installer has never run through on $(os_key)."
-        log_warn "The commands for the $OS_FAMILY family exist, but nobody has watched them succeed."
-        confirm "Continue anyway?" n || exit 0
-    fi
+    log_info "onions-server started on $OS_PRETTY ($OS_FAMILY family), code $INSTALL_ROOT, instance $INSTANCE_DIR"
+    os_measured || _log_line "WARN" "not yet proven on $(os_key) -- the family's commands run, watch the log"
     main_menu
 }
 

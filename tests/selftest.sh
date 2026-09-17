@@ -70,7 +70,19 @@ check "is_email ok"             is_email chris@example.org
 check "is_email rejects"        bash -c '. "$0/lib/checklist.sh"; ! is_email "chris@"' "$ROOT"
 check "is_pubkey ed25519"       is_pubkey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxxxx comment"
 check "is_pubkey path"          bash -c 'echo "ssh-ed25519 AAAA x" > "$1/k.pub"; . "$2/lib/checklist.sh"; is_pubkey "$1/k.pub"' _ "$TMP" "$ROOT"
-check "is_acme_mode"            is_acme_mode staging
+check "option_valid"            option_valid "a=A;b=B" b
+_t_opt_bad() { ! option_valid "a=A;b=B" c; }
+check "option_valid rejects"    _t_opt_bad
+check "option_label"            [ "$(option_label "a=Alpha;b=Beta" b)" = "Beta" ]
+out="$(printf '\n' | { pick_option v "Q" b "a=A;b=B;c=C"; echo "$v"; } | tail -1)"
+check "pick_option enter = default" [ "$out" = "b" ]
+out="$(printf 'x\n9\n3\n' | { pick_option v "Q" b "a=A;b=B;c=C"; echo "$v"; } | tail -1)"
+check "pick_option survives bad input" [ "$out" = "c" ]
+LANGUAGE=de COUNTRY=CH checklist_derive
+check "derive locale"           [ "$LOCALE" = "de_DE.UTF-8" ]
+check "derive timezone"         [ "$TIMEZONE" = "Europe/Zurich" ]
+check "derive keymap"           [ "$KEYMAP" = "ch" ]
+check "derived saved"           grep -qx "TIMEZONE=Europe/Zurich" "$SITE_ENV"
 check "personal user ok"        is_personal_user chris
 _t_pu_boot() { ! is_personal_user manager; }
 _t_pu_root() { ! is_personal_user root; }
@@ -93,6 +105,13 @@ check "require re-asks on invalid" [ "$out" = "admin@example.org" ]
 echo "== prompts"
 out="$(printf 'x\n9\n2\n' | choose "Pick" a b c 2>/dev/null | tail -1)"
 check "choose survives bad input" [ "$out" = "2" ]
+out="$(printf "1
+" | choose "Pick" a b 2>/dev/null)"
+check "choose prints only the answer" [ "$out" = "1" ]
+check "github_repo_of ssh"       [ "$(github_repo_of git@github.com:chrislingra/onions-toolserver.git)" = "chrislingra/onions-toolserver" ]
+check "github_repo_of https"     [ "$(github_repo_of https://github.com/o/r)" = "o/r" ]
+_t_repo_bad() { ! github_repo_of https://gitlab.com/o/r; }
+check "github_repo_of rejects"   _t_repo_bad
 out="$(printf '\n' | { ask v "Q" dflt; echo "$v"; })"
 check "ask keeps default"        [ "$out" = "dflt" ]
 check "confirm default n"        bash -c '. "$0/lib/common.sh"; ! confirm "Q?" n < /dev/null' "$ROOT"

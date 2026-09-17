@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# lib/checklist.sh -- the preparation checklist as data: site.env next to install.sh.
+# lib/checklist.sh -- the preparation checklist as data: site.env in the instance directory.
 # Everything the installer needs to know is asked here, never assumed and never hardcoded.
 # Passwords and keys are NOT part of it: they are asked at the moment of use (ask_secret)
 # and exist only in memory. site.env is gitignored. Sourced, never executed.
 
-# key | prompt | default (empty = required) | validator
+# key | prompt | default (empty = required) | validator | options (optional)
+#   options = "code=Label;code=Label;..."  -> the item is a numbered choice, the stored
+#   value is the code. Without options the item is a typed value with a default.
 # DOMAIN is not an item: the instance fixes it (install.sh, instance_open) before this loads.
 CHECKLIST_ITEMS=(
+    "LANGUAGE|Language of the system|de|is_nonempty|de=German;en=English (US);gb=English (UK);fr=French;it=Italian;es=Spanish;nl=Dutch;pl=Polish;pt=Portuguese"
+    "COUNTRY|Country (sets time zone and keyboard)|DE|is_nonempty|DE=Germany;AT=Austria;CH=Switzerland;NL=Netherlands;BE=Belgium;FR=France;IT=Italy;ES=Spain;PL=Poland;PT=Portugal;GB=United Kingdom;US=United States"
     "ADMIN_USER|First personal admin (Linux user name; not the bootstrap user)||is_personal_user"
     "ADMIN_SSH_PUBKEY|Public SSH key of that admin (one line, or a path to a .pub file)||is_pubkey"
     "ACME_EMAIL|E-mail for Let's Encrypt (expiry notices)||is_email"
-    "ACME_MODE|Let's Encrypt mode: staging (test certificates) or production|production|is_acme_mode"
+    "ACME_MODE|Let's Encrypt certificates|production|is_nonempty|production=Production (real certificates);staging=Staging (test certificates, no rate limits)"
     "TRAEFIK_IMAGE|Traefik image|traefik:v3|is_nonempty"
-    "TIMEZONE|System time zone|Europe/Berlin|is_nonempty"
-    "LOCALE|System locale|de_DE.UTF-8|is_nonempty"
-    "KEYMAP|Console keymap|de|is_nonempty"
     "NOTIFICATION_EMAIL|E-mail that receives system notifications (rkhunter, cron)||is_email"
     "SENDER_EMAIL|Sender address the server mails from|service@\${DOMAIN}|is_email"
     "SMTP_SERVER|SMTP relay host|smtp.ionos.de|is_nonempty"
@@ -24,14 +25,71 @@ CHECKLIST_ITEMS=(
     "TOOLSERVER_REF|Toolserver branch or tag to install|master|is_nonempty"
 )
 
+# What a language and a country mean for the system: locale | time zone + keymap.
+declare -A LANGUAGE_LOCALE=(
+    [de]="de_DE.UTF-8" [en]="en_US.UTF-8" [gb]="en_GB.UTF-8" [fr]="fr_FR.UTF-8" [it]="it_IT.UTF-8"
+    [es]="es_ES.UTF-8" [nl]="nl_NL.UTF-8" [pl]="pl_PL.UTF-8" [pt]="pt_PT.UTF-8"
+)
+declare -A COUNTRY_TIMEZONE=(
+    [DE]="Europe/Berlin" [AT]="Europe/Vienna" [CH]="Europe/Zurich" [NL]="Europe/Amsterdam" [BE]="Europe/Brussels"
+    [FR]="Europe/Paris" [IT]="Europe/Rome" [ES]="Europe/Madrid" [PL]="Europe/Warsaw" [PT]="Europe/Lisbon"
+    [GB]="Europe/London" [US]="America/New_York"
+)
+declare -A COUNTRY_KEYMAP=(
+    [DE]="de" [AT]="de" [CH]="ch" [NL]="us" [BE]="be" [FR]="fr" [IT]="it" [ES]="es" [PL]="pl" [PT]="pt" [GB]="gb" [US]="us"
+)
+
 is_nonempty()  { [[ -n "$1" ]]; }
 is_number()    { [[ "$1" =~ ^[0-9]+$ ]]; }
 is_domain()    { [[ "$1" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; }
 is_username()  { [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; }
 is_personal_user() { is_username "$1" && [[ "$1" != "${BOOTSTRAP_USER:-manager}" && "$1" != "root" ]]; }
 is_email()     { [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
-is_acme_mode() { [[ "$1" == "staging" || "$1" == "production" ]]; }
 is_pubkey()    { [[ "$1" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+)[[:space:]]+[A-Za-z0-9+/=]+ ]] || [[ -r "$1" && "$1" == *.pub ]]; }
+
+# option_valid "options" code -> the code is one of the options
+option_valid() { [[ ";$1;" == *";$2="* ]]; }
+# option_label "options" code -> its label
+option_label() {
+    local opt; IFS=';' read -ra _opts <<< "$1"
+    for opt in "${_opts[@]}"; do [[ "${opt%%=*}" == "$2" ]] && { echo "${opt#*=}"; return; }; done
+    echo "$2"
+}
+
+# _item_valid KEY VALUE -> validator, and membership for choice items
+_item_valid() {
+    local key="$1" value="$2" item k p d v o
+    [[ -n "$value" ]] || return 1
+    for item in "${CHECKLIST_ITEMS[@]}"; do
+        IFS='|' read -r k p d v o <<< "$item"
+        [[ "$k" == "$key" ]] || continue
+        "$v" "$value" || return 1
+        [[ -z "$o" ]] || option_valid "$o" "$value"
+        return
+    done
+    return 1
+}
+
+# pick_option VAR "Prompt" DEFAULT "options" -> numbered choice, Enter takes the default
+pick_option() {
+    local -n _target="$1"
+    local prompt="$2" default="$3" options="$4" i reply dflt=0
+    IFS=';' read -ra _opts <<< "$options"
+    echo "$prompt"
+    for i in "${!_opts[@]}"; do
+        printf '  %2d) %s\n' "$((i + 1))" "${_opts[$i]#*=}"
+        [[ "${_opts[$i]%%=*}" == "$default" ]] && dflt=$((i + 1))
+    done
+    while true; do
+        if (( dflt > 0 )); then read -r -p "Choice [$dflt]: " reply; reply="${reply:-$dflt}"
+        else read -r -p "Choice: " reply; fi
+        if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= ${#_opts[@]} )); then
+            _target="${_opts[$((reply - 1))]%%=*}"
+            return 0
+        fi
+        echo "  Enter a number between 1 and ${#_opts[@]}."
+    done
+}
 
 # checklist_load: read KEY=VALUE lines only (no code is executed from site.env).
 checklist_load() {
@@ -62,61 +120,79 @@ _checklist_default() {
     echo "$raw"
 }
 
+# _checklist_ask KEY PROMPT DEFAULT VALIDATOR OPTIONS CURRENT -> asks, validates, saves
+_checklist_ask() {
+    local key="$1" prompt="$2" default="$3" validator="$4" options="$5" current="$6" value
+    default="$(_checklist_default "$default")"
+    [[ -n "$current" ]] && default="$current"
+    while true; do
+        if [[ -n "$options" ]]; then pick_option value "$prompt" "$default" "$options"
+        else ask value "$prompt" "$default"; fi
+        _item_valid "$key" "$value" && break
+        echo "  '$value' is not a valid value for $key."
+    done
+    printf -v "$key" '%s' "$value"; export "$key"
+    checklist_save_key "$key" "$value"
+}
+
+# checklist_derive: LANGUAGE -> LOCALE, COUNTRY -> TIMEZONE + KEYMAP (saved, so steps and
+# the values view see them; changing language or country changes them again)
+checklist_derive() {
+    if [[ -n "${LANGUAGE:-}" && -n "${LANGUAGE_LOCALE[$LANGUAGE]:-}" ]]; then
+        LOCALE="${LANGUAGE_LOCALE[$LANGUAGE]}"; export LOCALE; checklist_save_key LOCALE "$LOCALE"
+    fi
+    if [[ -n "${COUNTRY:-}" && -n "${COUNTRY_TIMEZONE[$COUNTRY]:-}" ]]; then
+        TIMEZONE="${COUNTRY_TIMEZONE[$COUNTRY]}"; KEYMAP="${COUNTRY_KEYMAP[$COUNTRY]}"; export TIMEZONE KEYMAP
+        checklist_save_key TIMEZONE "$TIMEZONE"; checklist_save_key KEYMAP "$KEYMAP"
+    fi
+}
+
 # checklist_require KEY... -> every named key must have a valid value; asks for the rest.
 checklist_require() {
-    local want item key prompt default validator value
+    local want item key prompt default validator options value
     for want in "$@"; do
         for item in "${CHECKLIST_ITEMS[@]}"; do
-            IFS='|' read -r key prompt default validator <<< "$item"
+            IFS='|' read -r key prompt default validator options <<< "$item"
             [[ "$key" == "$want" ]] || continue
             value="${!key:-}"
-            if [[ -n "$value" ]] && "$validator" "$value"; then continue; fi
+            _item_valid "$key" "$value" && continue
             [[ -n "$value" ]] && log_warn "$key='$value' is not valid, asking again."
-            default="$(_checklist_default "$default")"
-            while true; do
-                ask value "$prompt" "$default"
-                "$validator" "$value" && break
-                echo "  '$value' is not a valid value for $key."
-            done
-            printf -v "$key" '%s' "$value"; export "$key"
-            checklist_save_key "$key" "$value"
+            _checklist_ask "$key" "$prompt" "$default" "$validator" "$options" ""
         done
     done
+    checklist_derive
 }
 
 # checklist_review: walk through every item, show the current value, allow changes.
 checklist_review() {
-    local item key prompt default validator value new
+    local item key prompt default validator options
     heading "Preparation checklist ($SITE_ENV)"
     for item in "${CHECKLIST_ITEMS[@]}"; do
-        IFS='|' read -r key prompt default validator <<< "$item"
-        value="${!key:-}"
-        default="$(_checklist_default "$default")"
-        [[ -z "$value" ]] && value="$default"
-        while true; do
-            ask new "$prompt" "$value"
-            "$validator" "$new" && break
-            echo "  '$new' is not a valid value for $key."
-        done
-        printf -v "$key" '%s' "$new"; export "$key"
-        checklist_save_key "$key" "$new"
+        IFS='|' read -r key prompt default validator options <<< "$item"
+        _checklist_ask "$key" "$prompt" "$default" "$validator" "$options" "${!key:-}"
     done
+    checklist_derive
     log_ok "Checklist saved to $SITE_ENV (mode 600)."
 }
 
 checklist_show() {
-    local item key prompt default validator value state
+    local item key prompt default validator options value state shown
     echo
-    printf '  %-20s %-40s %s\n' "KEY" "VALUE" "STATE"
-    printf '  %-20s %-40s %s\n' "DOMAIN" "${DOMAIN:-}" "instance"
+    printf '  %-20s %-44s %s\n' "KEY" "VALUE" "STATE"
+    printf '  %-20s %-44s %s\n' "DOMAIN" "${DOMAIN:-}" "instance"
     for item in "${CHECKLIST_ITEMS[@]}"; do
-        IFS='|' read -r key prompt default validator <<< "$item"
+        IFS='|' read -r key prompt default validator options <<< "$item"
         value="${!key:-}"
         if [[ -z "$value" ]]; then state="missing"
-        elif "$validator" "$value"; then state="ok"
+        elif _item_valid "$key" "$value"; then state="ok"
         else state="INVALID"; fi
-        [[ "$key" == "ADMIN_SSH_PUBKEY" && ${#value} -gt 40 ]] && value="${value:0:37}..."
-        printf '  %-20s %-40s %s\n' "$key" "$value" "$state"
+        shown="$value"
+        [[ -n "$options" && -n "$value" ]] && shown="$(option_label "$options" "$value")"
+        [[ "$key" == "ADMIN_SSH_PUBKEY" && ${#shown} -gt 44 ]] && shown="${shown:0:41}..."
+        printf '  %-20s %-44s %s\n' "$key" "$shown" "$state"
+    done
+    for key in LOCALE TIMEZONE KEYMAP; do
+        printf '  %-20s %-44s %s\n' "$key" "${!key:-}" "derived"
     done
     echo
 }

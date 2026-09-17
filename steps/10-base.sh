@@ -12,7 +12,7 @@ STEP_10_TITLE="Base system (updates, packages, locale, platform group, bootstrap
 
 step_10_run() {
     heading "$STEP_10_TITLE"
-    checklist_require TIMEZONE LOCALE KEYMAP
+    checklist_require LANGUAGE COUNTRY
 
     log_info "Refreshing package lists and upgrading the system ($OS_PRETTY)..."
     pkg_refresh

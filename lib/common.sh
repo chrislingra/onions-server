@@ -88,17 +88,18 @@ ask_secret() {
 choose() {
     local prompt="$1"; shift
     local items=("$@") i reply
+    # the list goes to the terminal (stderr), only the answer to stdout -- callers capture it
     for i in "${!items[@]}"; do
-        printf '  %2d) %s\n' "$((i + 1))" "${items[$i]}"
+        printf '  %2d) %s\n' "$((i + 1))" "${items[$i]}" >&2
     done
-    printf '   0) Cancel\n'
+    printf '   0) Cancel\n' >&2
     while true; do
         read -r -p "$prompt [0-${#items[@]}]: " reply
         if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 0 && reply <= ${#items[@]} )); then
             echo "$reply"
             return 0
         fi
-        echo "  Enter a number between 0 and ${#items[@]}."
+        echo "  Enter a number between 0 and ${#items[@]}." >&2
     done
 }
 
