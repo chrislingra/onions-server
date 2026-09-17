@@ -7,7 +7,6 @@ STEP_40_TITLE="Docker Engine and Compose plugin"
 
 step_40_run() {
     heading "$STEP_40_TITLE"
-    checklist_require ADMIN_USER
     if docker_ok; then
         log_ok "Docker present: $(docker --version) / $(docker compose version)"
     else
@@ -16,7 +15,11 @@ step_40_run() {
         docker_ok || die "Docker is installed but 'docker compose version' fails."
         log_ok "Docker installed: $(docker --version)"
     fi
-    run usermod -aG docker "$ADMIN_USER"
+    # the bootstrap user and every personal admin known so far get the docker group
+    local u
+    for u in "$BOOTSTRAP_USER" $(cat "$STATE_DIR/personal_users" 2>/dev/null); do
+        id "$u" >/dev/null 2>&1 && run usermod -aG docker "$u"
+    done
     if ! docker network inspect traefik_web >/dev/null 2>&1; then
         run docker network create traefik_web
         log_ok "Network traefik_web created."
@@ -24,5 +27,5 @@ step_40_run() {
         log_ok "Network traefik_web exists."
     fi
     step_done 40
-    log_ok "Docker ready. $ADMIN_USER needs a new login for the docker group."
+    log_ok "Docker ready. The docker group applies at the next login."
 }

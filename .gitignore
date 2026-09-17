@@ -1,29 +1,9 @@
-# answers, run state, logs, the Toolserver checkout of step 7
+# which instance this checkout serves (the domain) -- per host, never shared
+.instance
+# the Toolserver checkout of step 7
+src/
+# nothing of the instance lives here (it is in /opt/<domain>), but just in case
 site.env
 state/
 logs/
-src/
 *.log
-
-# on the live host /opt/onions.one also holds the Toolserver-delivered service scripts
-# and older operator material -- not part of this repository
-/setup-*.sh
-/add-*.sh
-/backup-*.sh
-/restore-*.sh
-/restart-*.sh
-/update*.sh
-/manage-*.sh
-/optimize-*.sh
-/fix-*.sh
-/grant-*.sh
-/toggle-*.sh
-/dos2unix.sh
-/watchtower.sh
-/harden-system.sh
-/user-security.sh
-/prepare-system.sh
-/setup-utf8.sh
-/id_*.pub
-/old/
-/tools/

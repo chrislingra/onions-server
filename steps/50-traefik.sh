@@ -7,7 +7,7 @@ STEP_50_TITLE="Traefik reverse proxy (/opt/traefik)"
 
 step_50_run() {
     heading "$STEP_50_TITLE"
-    checklist_require DOMAIN ADMIN_USER ACME_EMAIL ACME_MODE TRAEFIK_IMAGE
+    checklist_require ADMIN_USER ACME_EMAIL ACME_MODE TRAEFIK_IMAGE
     docker_ok || die "Docker is missing -- run the Docker step first."
     local dir="/opt/traefik"
     mkdir -p "$dir"
@@ -41,7 +41,10 @@ step_50_run() {
     fi
 
     (cd "$dir" && run docker compose up -d)
-    chown -R "$ADMIN_USER:$(primary_group "$ADMIN_USER")" "$dir"; chmod 600 "$dir/acme.json"
+    # platform directory: root owns, the platform group may edit (setgid keeps it that way);
+    # no person owns it, so removing a user never orphans it
+    chown -R "root:$PLATFORM_GROUP" "$dir"; chmod 2775 "$dir"; chmod 664 "$dir"/*.yml
+    chown root:root "$dir/acme.json"; chmod 600 "$dir/acme.json"
     step_done 50
     log_ok "Traefik running. Dashboard: https://traefik.$DOMAIN (DNS record required)."
 }

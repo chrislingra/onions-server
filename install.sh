@@ -2,26 +2,26 @@
 # install.sh -- onions-server: the menu-driven base installation of a fresh Linux host,
 # from the empty machine up to the point where the Toolserver takes over.
 #
-#   git clone git@github.com:chrislingra/onions-server.git /opt/<domain>
-#   cd /opt/<domain> && sudo bash install.sh
+#   git clone git@github.com:chrislingra/onions-server.git /opt/onions-server
+#   cd /opt/onions-server && sudo bash install.sh
 #
-# The directory name is the domain (convention /opt/<domain>). Answers live in site.env
-# next to this file (gitignored); passwords are asked when needed and never written by
-# this installer except into the config file that needs them (msmtprc, chpasswd).
+# Two places, kept apart on purpose:
+#   /opt/onions-server   this checkout -- generic code, the same on every host
+#   /opt/<domain>        the instance -- created by the installer on first start; holds the
+#                        answers (site.env, mode 600), step markers, backups and logs.
+#                        The domain is asked once and remembered in .instance (gitignored).
+# Passwords are asked when needed and never written by this installer except into the one
+# config file that needs them (msmtprc) or straight into chpasswd.
 # Steps are idempotent: running one twice repairs rather than breaks.
 set -euo pipefail
 
 INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SITE_ENV="$INSTALL_ROOT/site.env"
-STATE_DIR="$INSTALL_ROOT/state"
-LOG_DIR="$INSTALL_ROOT/logs"
-# a step runs as its own bash process (see run_step); it inherits stamp and log from the menu
-RUN_STAMP="${RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}"
-LOG_FILE="${LOG_FILE:-$LOG_DIR/install-$RUN_STAMP.log}"
-DOMAIN_GUESS="$(basename "$INSTALL_ROOT")"
-[[ "$DOMAIN_GUESS" == *.* ]] || DOMAIN_GUESS=""
+INSTANCE_FILE="$INSTALL_ROOT/.instance"
 
-mkdir -p "$STATE_DIR" "$LOG_DIR"
+# Fixed names of the platform -- the same on every host, so every script can rely on them.
+BOOTSTRAP_USER="manager"   # exists from step 1 on, works in the delivered state, removed by step 8
+PLATFORM_GROUP="onions"    # owns the platform directories; every admin is a member
+
 # shellcheck source=lib/common.sh
 . "$INSTALL_ROOT/lib/common.sh"
 # shellcheck source=lib/os.sh
@@ -33,13 +33,40 @@ for f in "$INSTALL_ROOT"/steps/*.sh; do
     . "$f"
 done
 
-STEPS=(10 20 30 40 50 60 70)
+STEPS=(10 20 30 40 50 60 70 80)
+
+# instance_open: the domain decides where everything of this host lives (/opt/<domain>).
+instance_open() {
+    local domain=""
+    [[ -f "$INSTANCE_FILE" ]] && domain="$(tr -d '[:space:]' < "$INSTANCE_FILE")"
+    if [[ -z "$domain" ]] || ! is_domain "$domain"; then
+        echo
+        echo "This host has no instance yet. The domain names it: everything of this host"
+        echo "goes to /opt/<domain> (answers, state, logs); the code stays in $INSTALL_ROOT."
+        while true; do
+            ask domain "Domain this server serves (e.g. example.org)"
+            is_domain "$domain" && break
+            echo "  '$domain' is not a valid domain."
+        done
+        printf '%s\n' "$domain" > "$INSTANCE_FILE"
+    fi
+    DOMAIN="$domain"; export DOMAIN
+    INSTANCE_DIR="/opt/$DOMAIN"
+    SITE_ENV="$INSTANCE_DIR/site.env"
+    STATE_DIR="$INSTANCE_DIR/state"
+    LOG_DIR="$INSTANCE_DIR/logs"
+    # a step runs as its own bash process (see run_step); it inherits stamp and log from the menu
+    RUN_STAMP="${RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}"
+    LOG_FILE="${LOG_FILE:-$LOG_DIR/install-$RUN_STAMP.log}"
+    mkdir -p "$INSTANCE_DIR" "$STATE_DIR" "$LOG_DIR"
+    chmod 750 "$INSTANCE_DIR"
+}
 
 banner() {
     clear
     echo "================================================================"
     echo "  onions-server -- base installation"
-    echo "  Host: $(hostname)   Domain: ${DOMAIN:-<not set>}"
+    echo "  Host: $(hostname)   Domain: $DOMAIN   Instance: $INSTANCE_DIR"
     echo "  System: $OS_PRETTY ($OS_FAMILY family)"
     if os_measured; then
         echo "  Proven on this distribution: ${OS_MEASURED[$(os_key)]}"
@@ -82,18 +109,18 @@ main_menu() {
         banner
         echo "   0) Preparation checklist (review or change every answer)"
         for n in "${STEPS[@]}"; do status_line "$n"; done
-        echo "   8) All steps in order (1-7)"
-        echo "   9) Show checklist values"
+        echo "   a) All steps in order (1-8)"
+        echo "   v) Show checklist values"
         echo "   q) Quit"
         echo
         read -r -p "Choice: " reply
         case "$reply" in
             0) checklist_review; pause ;;
-            [1-7]) run_step "$((reply * 10))" || true; pause ;;
-            8) run_all || true; pause ;;
-            9) checklist_show; pause ;;
+            [1-8]) run_step "$((reply * 10))" || true; pause ;;
+            a|A) run_all || true; pause ;;
+            v|V) checklist_show; pause ;;
             q|Q) exit 0 ;;
-            *) echo "  Enter 0-9 or q." ; sleep 1 ;;
+            *) echo "  Enter 0-8, a, v or q." ; sleep 1 ;;
         esac
     done
 }
@@ -101,13 +128,16 @@ main_menu() {
 main() {
     require_root
     os_detect
+    instance_open
     checklist_load
+    DOMAIN="$(tr -d '[:space:]' < "$INSTANCE_FILE")"   # .instance decides, not a hand-edited site.env
+    checklist_save_key DOMAIN "$DOMAIN"
     if [[ -n "${ONIONS_STEP:-}" ]]; then
         # child process for one step: set -e is honoured here, failure = exit code
         "step_${ONIONS_STEP}_run"
         exit $?
     fi
-    log_info "onions-server started on $OS_PRETTY, root $INSTALL_ROOT"
+    log_info "onions-server started on $OS_PRETTY, code $INSTALL_ROOT, instance $INSTANCE_DIR"
     if ! os_measured; then
         banner
         log_warn "This installer has never run through on $(os_key)."

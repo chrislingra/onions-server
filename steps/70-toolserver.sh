@@ -7,7 +7,7 @@ STEP_70_TITLE="Toolserver (pull from Git, run its setup, hand over)"
 
 step_70_run() {
     heading "$STEP_70_TITLE"
-    checklist_require DOMAIN TOOLSERVER_GIT TOOLSERVER_REF
+    checklist_require TOOLSERVER_GIT TOOLSERVER_REF
     docker_ok || die "Docker is missing -- run the Docker step first."
     docker ps --format '{{.Names}}' | grep -qx traefik || die "Traefik is not running -- run the Traefik step first."
     command -v git >/dev/null || pkg_install git

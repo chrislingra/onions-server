@@ -5,10 +5,10 @@
 # and exist only in memory. site.env is gitignored. Sourced, never executed.
 
 # key | prompt | default (empty = required) | validator
+# DOMAIN is not an item: the instance fixes it (install.sh, instance_open) before this loads.
 CHECKLIST_ITEMS=(
-    "DOMAIN|Domain the server serves (the directory name under /opt)|${DOMAIN_GUESS:-}|is_domain"
-    "ADMIN_USER|Administrative Linux user to create|manager|is_username"
-    "ADMIN_SSH_PUBKEY|Public SSH key of the admin (one line, or a path to a .pub file)||is_pubkey"
+    "ADMIN_USER|First personal admin (Linux user name; not the bootstrap user)||is_personal_user"
+    "ADMIN_SSH_PUBKEY|Public SSH key of that admin (one line, or a path to a .pub file)||is_pubkey"
     "ACME_EMAIL|E-mail for Let's Encrypt (expiry notices)||is_email"
     "ACME_MODE|Let's Encrypt mode: staging (test certificates) or production|production|is_acme_mode"
     "TRAEFIK_IMAGE|Traefik image|traefik:v3|is_nonempty"
@@ -28,6 +28,7 @@ is_nonempty()  { [[ -n "$1" ]]; }
 is_number()    { [[ "$1" =~ ^[0-9]+$ ]]; }
 is_domain()    { [[ "$1" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; }
 is_username()  { [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; }
+is_personal_user() { is_username "$1" && [[ "$1" != "${BOOTSTRAP_USER:-manager}" && "$1" != "root" ]]; }
 is_email()     { [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
 is_acme_mode() { [[ "$1" == "staging" || "$1" == "production" ]]; }
 is_pubkey()    { [[ "$1" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+)[[:space:]]+[A-Za-z0-9+/=]+ ]] || [[ -r "$1" && "$1" == *.pub ]]; }
@@ -107,6 +108,7 @@ checklist_show() {
     local item key prompt default validator value state
     echo
     printf '  %-20s %-40s %s\n' "KEY" "VALUE" "STATE"
+    printf '  %-20s %-40s %s\n' "DOMAIN" "${DOMAIN:-}" "instance"
     for item in "${CHECKLIST_ITEMS[@]}"; do
         IFS='|' read -r key prompt default validator <<< "$item"
         value="${!key:-}"

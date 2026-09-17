@@ -24,7 +24,7 @@ step_60_run() {
 
 _hard_mail() {
     heading "Mail relay"
-    checklist_require DOMAIN NOTIFICATION_EMAIL SENDER_EMAIL SMTP_SERVER SMTP_PORT SMTP_USER
+    checklist_require NOTIFICATION_EMAIL SENDER_EMAIL SMTP_SERVER SMTP_PORT SMTP_USER
     pkg_install msmtp msmtp-mta
     local pw
     ask_secret pw "Password of $SMTP_USER at $SMTP_SERVER"

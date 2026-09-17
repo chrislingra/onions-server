@@ -27,8 +27,9 @@ else
 fi
 
 # --- load the libraries the way install.sh does, but in a sandbox ---------------------
-INSTALL_ROOT="$ROOT"; STATE_DIR="$TMP/state"; LOG_DIR="$TMP/logs"; RUN_STAMP="test"
-LOG_FILE="$LOG_DIR/test.log"; SITE_ENV="$TMP/site.env"; DOMAIN_GUESS="example.org"
+INSTALL_ROOT="$ROOT"; INSTANCE_DIR="$TMP/instance"; STATE_DIR="$INSTANCE_DIR/state"; LOG_DIR="$INSTANCE_DIR/logs"
+RUN_STAMP="test"; LOG_FILE="$LOG_DIR/test.log"; SITE_ENV="$INSTANCE_DIR/site.env"; DOMAIN="example.org"
+BOOTSTRAP_USER="manager"; PLATFORM_GROUP="onions"
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 . "$ROOT/lib/common.sh"; . "$ROOT/lib/os.sh"; . "$ROOT/lib/checklist.sh"
 for f in "$ROOT"/steps/*.sh; do . "$f"; done
@@ -57,10 +58,10 @@ check "sshd service rhel"   [ "$(sshd_service)" = "sshd" ]
 check "pkg_name cron rhel"  [ "$(pkg_name cron)" = "cronie" ]
 
 echo "== checklist"
-printf '# comment\nDOMAIN=example.org\nADMIN_USER="chris"\nSMTP_PORT=587\nrm -rf / # not a key\nBAD KEY=1\n' > "$SITE_ENV"
-unset DOMAIN ADMIN_USER SMTP_PORT
+printf '# comment\nTIMEZONE=Europe/Berlin\nADMIN_USER="chris"\nSMTP_PORT=587\nrm -rf / # not a key\nBAD KEY=1\n' > "$SITE_ENV"
+unset TIMEZONE ADMIN_USER SMTP_PORT
 checklist_load
-check "loads DOMAIN"            [ "${DOMAIN:-}" = "example.org" ]
+check "loads TIMEZONE"          [ "${TIMEZONE:-}" = "Europe/Berlin" ]
 check "strips quotes"           [ "${ADMIN_USER:-}" = "chris" ]
 check "ignores non-keys"        [ -z "${BAD:-}" ]
 check "is_domain ok"            is_domain onions.one
@@ -70,13 +71,18 @@ check "is_email rejects"        bash -c '. "$0/lib/checklist.sh"; ! is_email "ch
 check "is_pubkey ed25519"       is_pubkey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxxxx comment"
 check "is_pubkey path"          bash -c 'echo "ssh-ed25519 AAAA x" > "$1/k.pub"; . "$2/lib/checklist.sh"; is_pubkey "$1/k.pub"' _ "$TMP" "$ROOT"
 check "is_acme_mode"            is_acme_mode staging
+check "personal user ok"        is_personal_user chris
+_t_pu_boot() { ! is_personal_user manager; }
+_t_pu_root() { ! is_personal_user root; }
+check "personal user not bootstrap" _t_pu_boot
+check "personal user not root"  _t_pu_root
 check "default expands DOMAIN"  [ "$(_checklist_default 'service@${DOMAIN}')" = "service@example.org" ]
 checklist_save_key TIMEZONE Europe/Berlin
 checklist_save_key TIMEZONE Europe/Vienna
 check "save replaces in place"  [ "$(grep -c '^TIMEZONE=' "$SITE_ENV")" = "1" ]
 check "save keeps value"        grep -q '^TIMEZONE=Europe/Vienna$' "$SITE_ENV"
 # a required key that is already valid asks nothing (stdin closed would fail otherwise)
-_t_req_valid() { checklist_require DOMAIN < /dev/null; }
+_t_req_valid() { checklist_require ADMIN_USER SMTP_PORT < /dev/null; }
 check "require valid asks nothing" _t_req_valid
 # a missing key is asked, answer comes from stdin
 out="$(printf 'admin@example.org\n' | { checklist_require ACME_EMAIL >/dev/null; echo "$ACME_EMAIL"; })"
@@ -120,12 +126,12 @@ check "compose keeps \$\$ hash"     grep -q 'manager:\$\$apr1\$\$x\$\$y' <<< "$o
 check "compose host rule"           grep -q 'Host(`traefik.example.org`)' <<< "$out"
 
 echo "== menu rendering"
-STEPS=(10 20 30 40 50 60 70); OS_PRETTY="Test OS"; OS_FAMILY="debian"; OS_ID=ubuntu; OS_VERSION=24.04
+STEPS=(10 20 30 40 50 60 70 80); OS_PRETTY="Test OS"; OS_FAMILY="debian"; OS_ID=ubuntu; OS_VERSION=24.04
 banner()      { :; }
 status_line() { local n="$1" title_var="STEP_${1}_TITLE"; printf '%s|%s\n' "$((n / 10))" "${!title_var}"; }
 out="$(for n in "${STEPS[@]}"; do status_line "$n"; done)"
-check "seven steps have titles"  [ "$(grep -c '|.\+' <<< "$out")" = "7" ]
-_t_steps() { local n; for n in 10 20 30 40 50 60 70; do declare -F "step_${n}_run" >/dev/null || return 1; done; }
+check "eight steps have titles"  [ "$(grep -c '|.\+' <<< "$out")" = "8" ]
+_t_steps() { local n; for n in 10 20 30 40 50 60 70 80; do declare -F "step_${n}_run" >/dev/null || return 1; done; }
 check "step functions exist"     _t_steps
 step_done 10; check "step marker"  step_is_done 10
 check "unmarked step open"       bash -c '! step_is_done 20'

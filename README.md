@@ -8,81 +8,97 @@ the hand-run scripts `prepare-system.sh`, `harden-system.sh`, `user-security.sh`
 Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1-K7):
 
 1. **Own repository**, separate from the Toolserver. The first thing that runs on a new
-   server is a `git clone` of this one.
-2. **Menu-driven**: `install.sh` shows the steps with their state; no parameters to know.
-3. **Distribution families** debian (Ubuntu, Debian), rhel (RHEL, Rocky, Alma, Fedora),
+   server is a `git clone` of this one -- to `/opt/onions-server`, the same on every host.
+2. **Code and instance apart**: the domain is individual, the code is not. On first start
+   the installer asks the domain once, remembers it in `.instance`, and creates
+   `/opt/<domain>` for everything of *this* host: the answers (`site.env`, mode 600), step
+   markers, backups, logs. A fresh machine has none of these directories; the installer
+   makes them.
+3. **Menu-driven**: `install.sh` shows the eight steps with their state; no parameters.
+4. **Distribution families** debian (Ubuntu, Debian), rhel (RHEL, Rocky, Alma, Fedora),
    suse (SLES, openSUSE Leap) behind `lib/os.sh`. A distribution the installer has not
-   been proven on says so and asks for a typed `YES` -- the code path exists, the proof
-   does not (see *Proving a run*).
-4. **Handover**: the last step pulls the Toolserver from Git and runs its own
+   been proven on says so and asks for a typed `YES` (see *Proving a run*).
+5. **Two kinds of users.** The **bootstrap user** `manager` (fixed name, step 1) makes the
+   delivered state work: sudo, docker, a generated one-time password shown once on the
+   console and expired on purpose. It owns nothing -- platform directories belong to
+   `root:onions`, the platform group every admin is in. **Personal admins** (step 3, as
+   many as needed) come each with their own SSH key; without a key there is no user,
+   because the hardening turns password login off -- and only after a key login was
+   proven in a second session. **Step 8 removes the bootstrap user** once a personal admin
+   with sudo and key exists, sshd is hardened and the user owns no files.
+6. **Handover**: step 7 pulls the Toolserver from Git and runs its own
    `scripts/setup-toolserver.sh`. From then on the Toolserver manages the host
    (Environment > Server-Config > Services). This repository never installs a service.
-5. **Checklist as data**: `checklist/PREPARATION.md` lists what to have ready;
-   `site.env` (gitignored, mode 600) holds the answers. **No password lives in this
-   repository or in `site.env`** -- they are asked hidden at the moment of use.
-6. **Bash, not Ansible**: a fresh server has bash and git before anything else, the raw
+7. **Checklist as data**: `checklist/PREPARATION.md` lists what to have ready; `site.env`
+   holds the answers. **No password lives in this repository or in `site.env`** -- they
+   are asked hidden at the moment of use.
+8. **Bash, not Ansible**: a fresh server has bash and git before anything else, the raw
    material was Bash, and the Toolserver takes over long before an orchestration tool
    would pay off.
 
-## Quick start
+## Quick start on a fresh machine
 
 ```bash
-# 1. git, then this repository into the domain directory
+# 1. git, then this repository (private: the deploy key of the machine must be registered)
 apt-get install -y git            # dnf install git / zypper install git
-git clone git@github.com:chrislingra/onions-server.git /opt/example.org
+git clone git@github.com:chrislingra/onions-server.git /opt/onions-server
 
-# 2. the menu
-cd /opt/example.org && sudo bash install.sh
+# 2. the menu -- asks the domain, creates /opt/<domain>, shows the steps
+cd /opt/onions-server && sudo bash install.sh
 ```
 
-Menu item 8 runs steps 1-7 in order; every step can also be run alone and repeated.
+Menu item `a` runs steps 1-8 in order; every step can also be run alone and repeated.
 
 | Step | Does | Origin |
 |---|---|---|
-| 1 Base system | update, base packages, snapd off (Ubuntu), locale, time zone | prepare-system.sh, setup-utf8.sh |
+| 1 Base system | update, base packages, snapd off (Ubuntu), locale, time zone, group `onions`, bootstrap user `manager` | prepare-system.sh, setup-utf8.sh |
 | 2 Firewall | deny in; 22/80/443 in; 587 out; 25/465 out blocked | prepare-system.sh, harden-system.sh |
-| 3 Admin user | user, sudo, key, SFTP (`internal-sftp`), sshd hardening behind a proof | prepare-system.sh, user-security.sh |
+| 3 Personal admins | users with SSH keys, sudo, SFTP (`internal-sftp`), sshd hardening behind a proof | user-security.sh |
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` | prepare-system.sh |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth | prepare-system.sh, live /opt/traefik |
 | 6 Hardening | mail relay (msmtp), CrowdSec + bouncer, rkhunter daily report, Docker Scout | harden-system.sh |
 | 7 Toolserver | deploy key, clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover | setup-toolserver.sh (Toolserver repo) |
+| 8 Finish | removes the bootstrap user after the checks | new |
 
 ## Layout
 
 ```
-install.sh              entry point and menu
-lib/common.sh           logging (terminal + logs/), prompts, backups, config-line editing
+install.sh              entry point, menu, instance (domain) handling
+lib/common.sh           logging (terminal + log), prompts, backups, config-line editing
 lib/os.sh               the distribution layer: packages, services, firewall, Docker, locale
 lib/checklist.sh        the checklist items, validation, site.env
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
 checklist/PREPARATION.md what to have ready
-site.env                answers (gitignored)      state/   step markers, backups (gitignored)
-logs/                   one log per run (gitignored)
+tests/selftest.sh       82 checks without root (syntax, detection, checklist, prompts, ...)
+.instance               the domain of this host (gitignored)
 src/                    Toolserver checkout for step 7 (gitignored)
-```
 
-On the live host `/opt/onions.one` also carries the service setup scripts the Toolserver
-delivers (`setup-<service>.sh`) and older material (`old/`, `tools/`); `.gitignore` keeps
-them out of this repository.
+/opt/<domain>/          the instance: site.env, state/ (markers, backups), logs/
+```
 
 ## What changed against the old scripts
 
 1. No plaintext password (prepare-system.sh had one for the admin user and the pipelines
-   API; harden-system.sh wrote the SMTP password into ssmtp.conf world-readable by mail).
-2. `ssmtp` → `msmtp` (ssmtp is not in Debian 12 / Ubuntu 24.04 any more).
-3. No Compose v1 binary; everything uses `docker compose`.
-4. sshd: settings land in `/etc/ssh/sshd_config.d/10-onions.conf` when the main file has
+   API; harden-system.sh wrote the SMTP password into ssmtp.conf). The bootstrap password
+   is generated per host, shown once, expired at once.
+2. One way to reach `/opt` for admins -- the group `onions` on setgid directories --
+   instead of three (`chown -R`, user ACL, group ACL) that fought each other and changed
+   the owner of container volumes.
+3. `ssmtp` → `msmtp` (ssmtp is not in Debian 12 / Ubuntu 24.04 any more).
+4. No Compose v1 binary; everything uses `docker compose`.
+5. sshd: settings land in `/etc/ssh/sshd_config.d/10-onions.conf` when the main file has
    an `Include`, so cloud-init's `PasswordAuthentication yes` no longer wins; the old
    `sed` on the main file never saw that drop-in. `AllowUsers` is not set (it made
    toggle-root.sh ineffective).
-5. No `chown -R /opt` (user-security.sh changed the owner of every container volume).
 6. Traefik image pinned to `traefik:v3` by default (the host runs `latest`); dashboard
    password hashed with `openssl passwd -apr1`, no apache2-utils needed.
+7. Every step runs as its own bash process: `set -e` is ignored inside a menu loop, and
+   the old menus died on a single non-numeric key.
 
 ## Proving a run
 
 `OS_MEASURED` in `lib/os.sh` lists the distributions this installer ran through
 completely on a fresh machine. It is empty until the first proof. To add one: fresh VM
-or snapshot → clone → menu item 8 → every step green → Toolserver reachable → add the
+or snapshot → clone → menu item `a` → every step green → Toolserver reachable → add the
 line `[<id>-<version>]="<date> <who/where>"` and commit. Nothing else counts as proven.
