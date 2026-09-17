@@ -1,0 +1,5 @@
+# bash and configs must stay LF -- a CRLF shebang breaks on the server
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.md text eol=lf

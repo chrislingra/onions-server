@@ -1,0 +1,21 @@
+services:
+  traefik:
+    image: @TRAEFIK_IMAGE@
+    container_name: traefik
+    restart: always
+    ports: ["80:80", "443:443"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./acme.json:/acme.json
+    networks: [traefik_web]
+    labels:
+      - "traefik.enable=true"
+      - 'traefik.http.routers.traefik-dashboard.rule=Host(`traefik.@DOMAIN@`)'
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=http_resolver"
+      - "traefik.http.middlewares.auth.basicauth.users=@ADMIN_USER@:@DASHBOARD_HASH@"
+      - "traefik.http.routers.traefik-dashboard.middlewares=auth"
+networks:
+  traefik_web: { external: true }
