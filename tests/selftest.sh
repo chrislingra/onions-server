@@ -123,6 +123,8 @@ check "github_repo_of ssh"       [ "$(github_repo_of git@github.com:chrislingra/
 check "github_repo_of https"     [ "$(github_repo_of https://github.com/o/r)" = "o/r" ]
 _t_repo_bad() { ! github_repo_of https://gitlab.com/o/r; }
 check "github_repo_of rejects"   _t_repo_bad
+check "deploy key per repository" [ "$(_deploy_key_for git@github.com:chrislingra/onions-toolserver.git)" = "/root/.ssh/deploy-onions-toolserver" ]
+check "deploy key from ssh url"   [ "$(_deploy_key_for ssh://git@github.com/o/other.git)" = "/root/.ssh/deploy-other" ]
 out="$(printf '\n' | { ask v "Q" dflt; echo "$v"; })"
 check "ask keeps default"        [ "$out" = "dflt" ]
 check "confirm default n"        bash -c '. "$0/lib/common.sh"; ! confirm "Q?" n < /dev/null' "$ROOT"

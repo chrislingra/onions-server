@@ -23,13 +23,15 @@ passwords are never stored -- have them at hand.
    deleted from the server after the proven login).
 6. **Let's Encrypt** -- the e-mail for expiry notices, and whether to start with
    `staging` (test certificates, no rate limits) or `production`.
-7. **GitHub access for step 7** -- `onions-server` is public and clones without a key.
-   The Toolserver repository is private: step 7 generates the machine's key and registers
-   it as a read-only deploy key by itself -- it asks once for a GitHub token (fine-grained,
-   repository `onions-toolserver`, permission *Administration: read and write*; create it
-   under *Settings > Developer settings > Fine-grained tokens*, short expiry). The token is
-   used for that one call and never stored. Alternative offered there: register the shown
-   key by hand in the browser.
+7. **GitHub access for step 7** -- the Toolserver repository is private, and a GitHub
+   deploy key belongs to **exactly one** repository. Step 7 therefore generates its own
+   key for it (`/root/.ssh/deploy-onions-toolserver`) and registers it as a read-only
+   deploy key by itself -- it asks once for a GitHub token (fine-grained, repository
+   `onions-toolserver`, permission *Administration: read and write*; create it under
+   *Settings > Developer settings > Fine-grained tokens*, short expiry). The token is used
+   for that one call and never stored. Alternative offered there: register the shown key
+   by hand at *repository > Settings > Deploy keys*. Whatever key cloned `onions-server`
+   itself (today also private) stays untouched; it cannot serve a second repository.
 8. **Mail relay** -- SMTP host, port (587), user name and password of the account the
    server sends from (e.g. an Ionos mailbox), the sender address and the address that
    receives notifications.

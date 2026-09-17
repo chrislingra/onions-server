@@ -57,7 +57,7 @@ Menu item `a` runs steps 1-8 in order; every step can also be run alone and repe
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver | deploy key, clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover |
+| 7 Toolserver | own deploy key per repository (GitHub allows one repository per key), clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout
@@ -70,7 +70,7 @@ lib/checklist.sh        the checklist items, validation, site.env
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
 checklist/PREPARATION.md what to have ready
-tests/selftest.sh       103 checks without root (syntax, detection, checklist, prompts, ...)
+tests/selftest.sh       105 checks without root (syntax, detection, checklist, prompts, ...)
 .instance               the domain of this host (gitignored)
 src/                    Toolserver checkout for step 7 (gitignored)
 
