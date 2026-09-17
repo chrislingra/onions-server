@@ -70,7 +70,7 @@ lib/checklist.sh        the checklist items, validation, site.env
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
 checklist/PREPARATION.md what to have ready
-tests/selftest.sh       102 checks without root (syntax, detection, checklist, prompts, ...)
+tests/selftest.sh       103 checks without root (syntax, detection, checklist, prompts, ...)
 .instance               the domain of this host (gitignored)
 src/                    Toolserver checkout for step 7 (gitignored)
 

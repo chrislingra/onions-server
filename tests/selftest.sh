@@ -74,6 +74,8 @@ _t_pod() { ! is_pubkey_or_dash "nonsense"; }
 check "is_pubkey_or_dash rejects" _t_pod
 check "KEY_SOURCE generate valid" _item_valid KEY_SOURCE generate
 check "KEY_SOURCE later valid"   _item_valid KEY_SOURCE later
+_t_options_wellformed() { local item k p d v o opt; for item in "${CHECKLIST_ITEMS[@]}"; do IFS="|" read -r k p d v o <<< "$item"; [[ -z "$o" ]] && continue; IFS=";" read -ra _o <<< "$o"; for opt in "${_o[@]}"; do [[ "$opt" =~ ^[A-Za-z0-9_-]+=.+$ ]] || { echo "bad option in $k: $opt"; return 1; }; done; done; }
+check "every option is code=label"  _t_options_wellformed
 _t_ks_none() { ! _item_valid KEY_SOURCE none; }
 check "KEY_SOURCE none gone"    _t_ks_none
 _t_ks() { ! _item_valid KEY_SOURCE upload; }
