@@ -24,8 +24,11 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    many as needed) log in with a password; SSH keys and the sshd hardening are optional
    here and otherwise follow in the Toolserver. A key can be pasted or generated on the
    server (handed out once, deleted after the proven login); the hardening turns password
-   login off only after a key login was proven in a second session. **Step 8 removes the bootstrap user** once a personal admin
-   with sudo who can log in exists and the user owns no files.
+   login off only after a key login was proven in a second session. **Step 8 removes the bootstrap user** once another
+   admin with sudo can log in (key or password -- the installer's first user counts), the
+   user owns no files outside its home, and the step is not run from that very login.
+   Every reason for a refusal is printed, numbered; declining the final question keeps the
+   user and leaves the step open.
 6. **Handover**: step 7 pulls the Toolserver from Git and runs its own
    `scripts/setup-toolserver.sh`. From then on the Toolserver manages the host
    (Environment > Server-Config > Services). This repository never installs a service.
