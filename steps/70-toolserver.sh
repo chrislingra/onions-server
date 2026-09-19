@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # steps/70-toolserver.sh -- the handover (K4/K7): pull the Toolserver from Git and run its
-# own setup-toolserver.sh. From here on the Toolserver manages the host (its Environment
+# setup-toolserver.sh. From here on the Toolserver manages the host (its Environment
 # module, GAP-ENV-LEITSTELLE-01); this installer's job ends. Sourced by install.sh.
+#
+# Since 2026-09-19 the setup script travels with THIS repository (toolserver/
+# setup-toolserver.sh), not with the Toolserver's: its repository carries no setup script
+# any more ("scripts/setup-*.sh darf es nicht geben", operator 2026-09-18, Toolserver
+# v1524) -- every setup script lives in /opt/<domain>, and the Toolserver's Environment
+# module lists them there. This step places the script into /opt/<domain>/ and runs it
+# from there; on the running host the Toolserver maintains that copy (deploy_write).
 
 STEP_70_TITLE="Toolserver (pull from Git, run its setup, hand over)"
 
@@ -26,9 +33,12 @@ step_70_run() {
     [[ -n "${DEPLOY_KEY:-}" ]] && git -C "$src" config core.sshCommand "ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes"
     log_ok "Toolserver source at $(cd "$src" && git describe --tags --always) ($TOOLSERVER_REF)."
 
-    [[ -f "$src/scripts/setup-toolserver.sh" ]] || die "scripts/setup-toolserver.sh is missing in the Toolserver checkout."
-    log_info "Handing over to the Toolserver's own setup (Docker and Traefik are done here)."
-    (cd "$src" && run bash scripts/setup-toolserver.sh --domain "$DOMAIN" --source "$src" --skip-docker --skip-traefik)
+    local setup="$INSTANCE_DIR/setup-toolserver.sh"
+    [[ -f "$INSTALL_ROOT/toolserver/setup-toolserver.sh" ]] || die "toolserver/setup-toolserver.sh is missing in $INSTALL_ROOT."
+    run install -m 755 "$INSTALL_ROOT/toolserver/setup-toolserver.sh" "$setup"
+    log_ok "Setup script placed at $setup (the Toolserver lists and maintains it there)."
+    log_info "Handing over to the Toolserver's setup (Docker and Traefik are done here)."
+    (cd "$src" && run bash "$setup" --domain "$DOMAIN" --source "$src" --skip-docker --skip-traefik)
     step_done 70
     echo
     log_ok "Handover complete. The Toolserver now owns the host: https://tools.$DOMAIN"

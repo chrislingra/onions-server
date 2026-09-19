@@ -13,14 +13,17 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL $*"; }
 check() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else fail "$name"; fi; }
 
 echo "== syntax"
-for f in "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/steps/*.sh "$ROOT"/tests/*.sh; do
+for f in "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/steps/*.sh "$ROOT"/toolserver/*.sh "$ROOT"/tests/*.sh; do
     check "bash -n ${f#$ROOT/}" bash -n "$f"
     if grep -q $'\r' "$f"; then fail "LF only: ${f#$ROOT/}"; else ok "LF only: ${f#$ROOT/}"; fi
 done
 
 echo "== no secrets in the tree"
+# ADMIN_STANDARD_PASSWORD is the Toolserver's documented FIRST-LOGIN password (its
+# setup-toolserver.sh phase 8, operator decision v1505/v1507): printed on the console at
+# the end of the run, to be changed at the first login -- a known start value, not a secret.
 if grep -rInE '(PASSWORD|PASS|SECRET|TOKEN|API_KEY)[[:space:]]*=[[:space:]]*"?[A-Za-z0-9]{6,}' "$ROOT" --include='*.sh' --include='*.yml' --include='*.md' \
-    | grep -vE 'ask_secret|\$\{?[A-Za-z_]+\}?|@[A-Z_]+@|password[[:space:]]+\$pw' >/dev/null; then
+    | grep -vE 'ask_secret|\$\{?[A-Za-z_]+\}?|@[A-Z_]+@|password[[:space:]]+\$pw|ADMIN_STANDARD_PASSWORD=' >/dev/null; then
     fail "a literal credential-looking assignment exists"
 else
     ok "no literal credentials"

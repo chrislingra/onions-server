@@ -29,9 +29,12 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    user owns no files outside its home, and the step is not run from that very login.
    Every reason for a refusal is printed, numbered; declining the final question keeps the
    user and leaves the step open.
-6. **Handover**: step 7 pulls the Toolserver from Git and runs its own
-   `scripts/setup-toolserver.sh`. From then on the Toolserver manages the host
-   (Environment > Server-Config > Services). This repository never installs a service.
+6. **Handover**: step 7 pulls the Toolserver from Git, places `toolserver/setup-toolserver.sh`
+   into `/opt/<domain>/` and runs it from there. The Toolserver repository carries no setup
+   script (operator 2026-09-18: `scripts/setup-*.sh` must not exist there -- every setup script
+   lives in `/opt/<domain>`); this one travels here because it runs before a Toolserver exists.
+   From then on the Toolserver manages the host (Environment > Server-Config > Services) and
+   maintains that copy. This repository never installs a service.
 7. **Checklist as data**: `checklist/PREPARATION.md` lists what to have ready; `site.env`
    holds the answers. **No password lives in this repository or in `site.env`** -- they
    are asked hidden at the moment of use.
@@ -42,7 +45,8 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
 ## Quick start on a fresh machine
 
 ```bash
-# 1. git, then this repository (public -- no key needed for this clone)
+# 1. git, then this repository (private: the clone asks for the GitHub user and a token --
+#    GitHub takes no account password here; a fine-grained token with Contents: read suffices)
 apt-get install -y git            # dnf install git / zypper install git
 git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
 
@@ -60,7 +64,7 @@ Menu item `a` runs steps 1-8 in order; every step can also be run alone and repe
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver | own deploy key per repository (GitHub allows one repository per key), clone, `setup-toolserver.sh --skip-docker --skip-traefik`, handover |
+| 7 Toolserver | own deploy key per repository (GitHub allows one repository per key), clone, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik`, handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout
@@ -72,8 +76,9 @@ lib/os.sh               the distribution layer: packages, services, firewall, Do
 lib/checklist.sh        the checklist items, validation, site.env
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
+toolserver/             setup-toolserver.sh -- the Toolserver's setup, placed into /opt/<domain>/ by step 7
 checklist/PREPARATION.md what to have ready
-tests/selftest.sh       105 checks without root (syntax, detection, checklist, prompts, ...)
+tests/selftest.sh       checks without root (syntax, detection, checklist, prompts, ...)
 .instance               the domain of this host (gitignored)
 src/                    Toolserver checkout for step 7 (gitignored)
 
