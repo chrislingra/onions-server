@@ -45,8 +45,7 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
 ## Quick start on a fresh machine
 
 ```bash
-# 1. git, then this repository (private: the clone asks for the GitHub user and a token --
-#    GitHub takes no account password here; a fine-grained token with Contents: read suffices)
+# 1. git, then this repository -- no login, nothing to register
 apt-get install -y git            # dnf install git / zypper install git
 git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
 
@@ -56,6 +55,15 @@ cd /opt/onions-server && sudo bash install.sh
 
 Menu item `a` runs steps 1-8 in order; every step can also be run alone and repeated.
 
+**Access to the Toolserver's source (step 7).** This installer is a product path for an
+unknown user (open core: the Toolserver's base is published under AGPL-3.0-only from
+release level 1). From then on `TOOLSERVER_GIT` is a public address and step 7 clones it
+without credentials -- no deploy key, no token, no password, nothing registered anywhere.
+Until that release the base is closed and only lingra installs: the operator registers this
+host's own key (`/root/.ssh/id_ed25519.pub`) as a read-only deploy key of the private
+repository and enters its ssh address. Step 7 has no key handling of its own -- it probes
+the address the way git will use it, never prompts, and shows git's reason if it fails.
+
 | Step | Does |
 |---|---|
 | 1 Base system | update, base packages, snapd off (Ubuntu), locale, time zone, group `onions`, bootstrap user `manager` |
@@ -64,7 +72,7 @@ Menu item `a` runs steps 1-8 in order; every step can also be run alone and repe
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver | own deploy key per repository (GitHub allows one repository per key), clone, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik`, handover |
+| 7 Toolserver | probes `TOOLSERVER_GIT` without prompting, clones it, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik` (first-login password generated, printed once), handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout

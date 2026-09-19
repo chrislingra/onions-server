@@ -19,11 +19,10 @@ for f in "$ROOT"/install.sh "$ROOT"/lib/*.sh "$ROOT"/steps/*.sh "$ROOT"/toolserv
 done
 
 echo "== no secrets in the tree"
-# ADMIN_STANDARD_PASSWORD is the Toolserver's documented FIRST-LOGIN password (its
-# setup-toolserver.sh phase 8, operator decision v1505/v1507): printed on the console at
-# the end of the run, to be changed at the first login -- a known start value, not a secret.
+# No exception any more: since 2026-09-19 the first-login password of the Toolserver is
+# generated in phase 4 of its setup (secrets/admin_password), the tree holds no start value.
 if grep -rInE '(PASSWORD|PASS|SECRET|TOKEN|API_KEY)[[:space:]]*=[[:space:]]*"?[A-Za-z0-9]{6,}' "$ROOT" --include='*.sh' --include='*.yml' --include='*.md' \
-    | grep -vE 'ask_secret|\$\{?[A-Za-z_]+\}?|@[A-Z_]+@|password[[:space:]]+\$pw|ADMIN_STANDARD_PASSWORD=' >/dev/null; then
+    | grep -vE 'ask_secret|\$\{?[A-Za-z_]+\}?|@[A-Z_]+@|password[[:space:]]+\$pw' >/dev/null; then
     fail "a literal credential-looking assignment exists"
 else
     ok "no literal credentials"
@@ -122,12 +121,16 @@ check "choose survives bad input" [ "$out" = "2" ]
 out="$(printf "1
 " | choose "Pick" a b 2>/dev/null)"
 check "choose prints only the answer" [ "$out" = "1" ]
-check "github_repo_of ssh"       [ "$(github_repo_of git@github.com:chrislingra/onions-toolserver.git)" = "chrislingra/onions-toolserver" ]
-check "github_repo_of https"     [ "$(github_repo_of https://github.com/o/r)" = "o/r" ]
-_t_repo_bad() { ! github_repo_of https://gitlab.com/o/r; }
-check "github_repo_of rejects"   _t_repo_bad
-check "deploy key per repository" [ "$(_deploy_key_for git@github.com:chrislingra/onions-toolserver.git)" = "/root/.ssh/deploy-onions-toolserver" ]
-check "deploy key from ssh url"   [ "$(_deploy_key_for ssh://git@github.com/o/other.git)" = "/root/.ssh/deploy-other" ]
+# step 7 probes the Toolserver address without any key handling of its own and without
+# ever prompting; both cases run against local repositories, no network needed
+git init -q "$TMP/readable" && git -C "$TMP/readable" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
+_t_git_ok()  { TOOLSERVER_GIT="$TMP/readable" _git_readable; }
+_t_git_bad() { ! TOOLSERVER_GIT="$TMP/nowhere" _git_readable < /dev/null; }
+check "step 7 reads a readable address" _t_git_ok
+check "step 7 stops on an unreadable address" _t_git_bad
+check "step 7 never prompts" [ "$(TOOLSERVER_GIT="$TMP/nowhere" _git_readable >/dev/null 2>&1; echo "$GIT_TERMINAL_PROMPT")" = "0" ]
+_t_no_keys() { ! grep -qE '^[[:space:]]*(run[[:space:]]+)?ssh-keygen|api.github.com|ask_secret|IdentitiesOnly' "$ROOT/steps/70-toolserver.sh"; }
+check "step 7 carries no key apparatus" _t_no_keys
 out="$(printf '\n' | { ask v "Q" dflt; echo "$v"; })"
 check "ask keeps default"        [ "$out" = "dflt" ]
 check "confirm default n"        bash -c '. "$0/lib/common.sh"; ! confirm "Q?" n < /dev/null' "$ROOT"

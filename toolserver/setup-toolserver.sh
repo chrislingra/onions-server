@@ -17,8 +17,9 @@
 #            PostgreSQL + Toolserver containers (v1503)
 #   Phase 7: Structure, tenants, seed (one transaction), platform project and
 #            languages, env section, then the pending patches (v1504)
-#   Phase 8: Create superadmin user with the standard printed password,
-#            retried against a container that may still be starting (v1505, v1507)
+#   Phase 8: Create superadmin user with the password generated in phase 4
+#            (printed once in the summary), retried against a container that
+#            may still be starting (v1505, v1507; generated since 2026-09-19)
 #
 # Where this script lives (2026-09-19): the Toolserver repository carries no setup
 # script any more ("scripts/setup-*.sh darf es nicht geben", operator 2026-09-18);
@@ -294,6 +295,10 @@ _create_secret() {
                 openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 16 > "$file"
             fi
             ;;
+        login)
+            # always generated, never taken from an option: 16 chars alphanumeric
+            openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 16 > "$file"
+            ;;
     esac
     chmod 600 "$file"
     log "$name — generated"
@@ -305,9 +310,10 @@ if [ "$DRY_RUN" = false ]; then
     _create_secret "menu_password"      "password"
     _create_secret "api_key"            "random"
     _create_secret "connector_enc.key"  "fernet"
+    _create_secret "admin_password"     "login"
     log "All secrets in $SECRETS_DIR (chmod 600)"
 else
-    info "[DRY RUN] Would generate 5 secret files in $SECRETS_DIR"
+    info "[DRY RUN] Would generate 6 secret files in $SECRETS_DIR"
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -571,11 +577,23 @@ phase 8 "Superadmin User"
 # already buys it time; this adds up to two more minutes), and track this
 # run's real result in ADMIN_LOGIN_SET so the summary never claims a password
 # that was not actually set.
-ADMIN_STANDARD_PASSWORD="dont4get"
+#
+# 2026-09-19 (operator, open core -- D-OPENCORE-05/08/12: this installer is a
+# product path for an unknown user and its text gets published): the fixed
+# password of v1505 is gone. 'admin' gets the password generated in phase 4
+# (secrets/admin_password, 16 characters, mode 600, kept across re-runs) and
+# the summary prints it once -- exactly like the menu password. Everything
+# else of v1505/v1507 stays: hashed inside the container, never overwriting a
+# password already set, no claim in the summary that this run did not earn.
+ADMIN_PASSWORD="$(cat "$SECRETS_DIR/admin_password" 2>/dev/null || true)"
 HAD_PW=""             # set below when not a dry run; `set -u` needs it bound for the summary
 ADMIN_LOGIN_SET=false # true only once the hash below actually lands in the database
 
 if [ "$DRY_RUN" = false ]; then
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        err "$SECRETS_DIR/admin_password is missing or empty -- phase 4 did not run. Nothing hashed, 'admin' untouched."
+        exit 1
+    fi
     HAD_PW="$(_psql_q "SELECT COALESCE((SELECT password_hash IS NOT NULL FROM public.users WHERE username = 'admin'), false)")"
 
     # Hash inside the running container with the project's own function
@@ -585,7 +603,7 @@ if [ "$DRY_RUN" = false ]; then
     # abort, there).
     ADMIN_HASH=""
     for i in $(seq 1 12); do
-        if ADMIN_HASH="$(docker exec -e ADMIN_PW="$ADMIN_STANDARD_PASSWORD" toolserver python3 -c '
+        if ADMIN_HASH="$(docker exec -e ADMIN_PW="$ADMIN_PASSWORD" toolserver python3 -c '
 from services.auth_gate import hash_password
 import os
 print(hash_password(os.environ["ADMIN_PW"]))
@@ -608,10 +626,10 @@ SQL
         if [ "$HAD_PW" = "t" ]; then
             log "Superadmin 'admin' already has a personal password (this one, or one you set) -- unchanged."
         else
-            log "Superadmin 'admin' ready -- login name admin, password ${ADMIN_STANDARD_PASSWORD}. Change it under Admin > Users."
+            log "Superadmin 'admin' ready -- login name admin, password ${ADMIN_PASSWORD} (also in $SECRETS_DIR/admin_password). Change it under Admin > Users."
         fi
     else
-        warn "Could not hash the standard password inside the container after 2 minutes of retries -- 'admin' has no personal password yet."
+        warn "Could not hash the generated password inside the container after 2 minutes of retries -- 'admin' has no personal password yet."
         warn "Check: docker logs toolserver -- once it answers /health, re-run this script (idempotent: it never overwrites an existing password)."
         _psql <<SQL
 INSERT INTO public.users (username, tenant_id, name, email, access_role, active)
@@ -621,7 +639,7 @@ SQL
         warn "Fallback for now: leave the login name empty and use the menu password (see the summary below)."
     fi
 else
-    info "[DRY RUN] Would create superadmin user with the standard password"
+    info "[DRY RUN] Would create superadmin user with the password generated in phase 4"
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -634,13 +652,13 @@ echo "╚═══════════════════════�
 echo ""
 echo "  URL:           https://tools.${DOMAIN}/menu"
 if [ "$DRY_RUN" = true ]; then
-    echo "  Login:         [DRY RUN] would be admin / ${ADMIN_STANDARD_PASSWORD}, unless a personal password already exists"
+    echo "  Login:         [DRY RUN] would be admin with the password generated in phase 4, unless a personal password already exists"
 elif [ "$HAD_PW" = "t" ]; then
     echo "  Login:         admin, with the password already set on this instance"
 elif [ "$ADMIN_LOGIN_SET" = true ]; then
-    echo "  Login:         admin / ${ADMIN_STANDARD_PASSWORD}   (change it under Admin > Users)"
+    echo "  Login:         admin / ${ADMIN_PASSWORD}   (change it under Admin > Users; kept in $SECRETS_DIR/admin_password)"
 else
-    echo "  Login:         admin has NO password yet -- the standard password could not be set (see warning above)"
+    echo "  Login:         admin has NO password yet -- the generated password could not be set (see warning above)"
 fi
 echo "  Fallback door: leave the login name empty, password = $(cat "$SECRETS_DIR/menu_password" 2>/dev/null || echo '(see secrets/menu_password)')"
 echo "                 -- open only until a superadmin has a personal password; still open above if the warning fired"
