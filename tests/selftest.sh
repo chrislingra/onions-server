@@ -376,6 +376,40 @@ check "step functions exist"     _t_steps
 step_done 10; check "step marker"  step_is_done 10
 check "unmarked step open"       bash -c '! step_is_done 20'
 
+echo "== backup access (the repair that must not change an owner)"
+_ba="$ROOT/tools/backup-access.sh"
+check "backup-access.sh exists"      [ -f "$_ba" ]
+check "backup-access.sh parses"      bash -n "$_ba"
+# The whole promise of the script is in what it does NOT call. A single chown,
+# chgrp or chmod in here breaks the one guarantee the operator asked for, and a
+# --set or -b would replace existing entries instead of adding one.
+check "no chown"                     bash -c '! grep -Eq "^[^#]*\bchown\b" "$1"' _ "$_ba"
+check "no chgrp"                     bash -c '! grep -Eq "^[^#]*\bchgrp\b" "$1"' _ "$_ba"
+check "no chmod"                     bash -c '! grep -Eq "^[^#]*\bchmod\b" "$1"' _ "$_ba"
+check "no ACL wipe (-b/--set)"       bash -c '! grep -Eq "setfacl[^|]*(-b|--remove-all|--set)" "$1"' _ "$_ba"
+check "adds, never replaces"         grep -Eq 'setfacl -R -m ' "$_ba"
+check "sets the default entry"       grep -Eq 'setfacl -R -d -m ' "$_ba"
+check "rX, not rx"                   bash -c 'grep -Eq ":rX\"" "$1" && ! grep -Eq ":rx\"" "$1"' _ "$_ba"
+# The path is the job: no argument may point it somewhere else.
+check "path is fixed to /opt/backups" grep -q '^DIR="/opt/backups"' "$_ba"
+check "refuses a symlink"            grep -q 'is a symbolic link' "$_ba"
+check "refuses without setfacl"      grep -q "command -v setfacl" "$_ba"
+check "proves the ACL was kept"      grep -q 'getfacl -c' "$_ba"
+check "10-base calls it"             grep -q '_backup_access' "$ROOT/steps/10-base.sh"
+check "called from _backup_root"     bash -c 'sed -n "/^_backup_root()/,/^}/p" "$1" | grep -q "_backup_access"' _ "$ROOT/steps/10-base.sh"
+
+echo "== phase 7 of setup-toolserver.sh"
+_st="$ROOT/toolserver/setup-toolserver.sh"
+# The seed is loaded in ONE transaction -- that is what makes a deferred check
+# work. If that ever becomes several, the deferral below silently stops helping.
+check "seed loads in one transaction" grep -q 'single-transaction' "$_st"
+check "self-keys deferred before seed" bash -c '
+    d=$(grep -n "INITIALLY DEFERRED" "$1" | head -1 | cut -d: -f1)
+    s=$(grep -n "schema_seed.sql (one transaction)" "$1" | head -1 | cut -d: -f1)
+    [ -n "$d" ] && [ -n "$s" ] && [ "$d" -lt "$s" ]' _ "$_st"
+check "both self-keys named"          bash -c '
+    grep -q "menu_nodes_parent_node_id_fkey" "$1" && grep -q "projects_predecessor_fkey" "$1"' _ "$_st"
+
 echo
 echo "$PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

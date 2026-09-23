@@ -79,6 +79,34 @@ _backup_root() {
     chmod 2750 "$dir"
     log_ok "$dir belongs to root:$PLATFORM_GROUP, mode 2750 (setgid -- new subdirectories inherit the group)."
     log_info "Everyone in $PLATFORM_GROUP can read the backups -- including database dumps."
+
+    # Everything ALREADY lying there keeps the owner, group and mode it was born
+    # with -- on a host that grew before this installer, that is mode 700 and 600,
+    # root only. setgid changes nothing about the past. The repair adds an access
+    # entry beside the owner instead of rewriting it (operator 2026-09-23: "ein
+    # script, das sicher ist und keinen owner aendert"), and it runs here so a
+    # fresh installation never needs anyone to remember it.
+    _backup_access
+}
+
+# ACLs need the 'acl' package. Installing it is part of the base system, not a
+# decision -- without it the repair below can only report that it did nothing.
+_backup_access() {
+    local script="$INSTALL_ROOT/tools/backup-access.sh"
+    if [[ ! -f "$script" ]]; then
+        log_warn "tools/backup-access.sh is missing -- existing backups keep root-only access."
+        return 0
+    fi
+    command -v setfacl >/dev/null 2>&1 || pkg_install acl || true
+    if bash "$script" "$PLATFORM_GROUP"; then
+        return 0
+    fi
+    # Not fatal for the base system: the platform installs and runs either way,
+    # only the OLD backups stay unreadable. Saying so is the point -- a silent
+    # skip here is how the finding was born in the first place.
+    log_warn "Access to the existing backups could not be opened up (see the lines above)."
+    log_warn "The platform is unaffected; run 'bash $script $PLATFORM_GROUP' once the cause is fixed."
+    return 0
 }
 
 # The first password of a fresh host has to ARRIVE somewhere. Printing it on the console is
