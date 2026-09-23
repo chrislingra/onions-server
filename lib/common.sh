@@ -60,9 +60,25 @@ _prompt_back() {
     return "$PROMPT_RC_BACK"
 }
 
+# One column for every answer of every question: the numbered choices of pick_option print
+# with "  %2d)", so these print with "  %2s)" and land under them instead of two characters
+# to the left. A list that is almost aligned reads worse than one that is not aligned at all.
 _prompt_extras() {
-    echo "  h) Help -- what this question means"
-    echo "  b) One step back"
+    printf '  %2s) %s\n' "h" "Help -- what this question means"
+    printf '  %2s) %s\n' "b" "One step back"
+}
+
+# _prompt_headline "Question (long aside)" -> the question on one line, a long aside
+# indented on the next. Many questions here end in a parenthesis that explains the value;
+# left in the same line it is what turns a readable question into a wrapped block. A short
+# aside ("SMTP relay port (submission)") stays where it is -- splitting that would be noise.
+_prompt_headline() {
+    local text="$1"
+    if [[ "$text" =~ ^(.*[^[:space:]])[[:space:]]\((.+)\)$ ]] && (( ${#BASH_REMATCH[2]} > 24 )); then
+        printf '%s\n  (%s)\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    else
+        printf '%s\n' "$text"
+    fi
 }
 
 # confirm "Question?" [y|n] [helpkey] -> 0 for yes, 1 for no, and it never returns on "back"
@@ -71,9 +87,9 @@ _prompt_extras() {
 confirm() {
     local question="$1" default="${2:-n}" helpkey="${3:-}" reply dflt=2
     [[ "$default" == "y" ]] && dflt=1
-    echo "$question"
-    echo "  1) Yes"
-    echo "  2) No"
+    _prompt_headline "$question"
+    printf '  %2d) %s\n' 1 "Yes"
+    printf '  %2d) %s\n' 2 "No"
     _prompt_extras
     while true; do
         read -r -p "Choice [$dflt]: " reply
@@ -91,14 +107,27 @@ confirm() {
 # ask VAR "Prompt" [default] [helpkey] -> reads into VAR, keeps default on empty input.
 # A lone h or b is the help / back answer here too. None of the values this installer asks
 # for -- domain, user name, e-mail, key, URL -- is a single letter, so nothing is shadowed.
+#
+# The layout is the same as every menu: question on its own line, then one indented line per
+# thing you can do, then a short input line (operator 2026-09-23: "es aendert sich von
+# strukturiert und zeilenweise in brei den keiner lesen kann"). Question, default and the two
+# extra answers used to be crammed into the read prompt, which wrapped into a wall of text as
+# soon as the question or the default was long -- and both are long here: a git URL, an SSH
+# key, a sentence explaining what the value means.
 ask() {
     local -n _target="$1"
-    local prompt="$2" default="${3:-}" helpkey="${4:-}" reply
+    local prompt="$2" default="${3:-}" helpkey="${4:-}" reply show=1
     while true; do
-        if [[ -n "$default" ]]; then read -r -p "$prompt [$default]  (h = help, b = back): " reply
-        else                          read -r -p "$prompt  (h = help, b = back): " reply; fi
+        if (( show )); then
+            _prompt_headline "$prompt"
+            [[ -n "$default" ]] && echo "  Default: $default"
+            _prompt_extras
+            show=0
+        fi
+        if [[ -n "$default" ]]; then read -r -p "Value [Enter = default]: " reply
+        else                          read -r -p "Value: " reply; fi
         case "$reply" in
-            h|H|\?) help_show "$helpkey" "$prompt"; continue ;;
+            h|H|\?) help_show "$helpkey" "$prompt"; show=1; continue ;;
             b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
         esac
         if [[ -z "$reply" ]]; then
@@ -112,14 +141,20 @@ ask() {
 }
 
 # ask_secret VAR "Prompt" [helpkey] -> hidden input, asked twice, never logged, never written
-# to disk. Help and back are typed at the first prompt like anywhere else.
+# to disk. Same layout as ask; the input line says that nothing will appear while you type,
+# because a hidden field that gives no sign of itself looks like a hung terminal.
 ask_secret() {
     local -n _target="$1"
-    local prompt="$2" helpkey="${3:-}" first second
+    local prompt="$2" helpkey="${3:-}" first second show=1
     while true; do
-        read -r -s -p "$prompt  (h = help, b = back): " first; echo
+        if (( show )); then
+            _prompt_headline "$prompt"
+            _prompt_extras
+            show=0
+        fi
+        read -r -s -p "Value (hidden, nothing appears as you type): " first; echo
         case "$first" in
-            h|H|\?) help_show "$helpkey" "$prompt"; continue ;;
+            h|H|\?) help_show "$helpkey" "$prompt"; show=1; continue ;;
             b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
         esac
         [[ -n "$first" ]] || { echo "  A value is required."; continue; }

@@ -84,6 +84,29 @@ check "menu asks the family for the name" _t_no_hardcoded_tool
 # the report must run without a machine and must never refuse
 _t_report() { detect sles 15.6 '' '' >/dev/null; LOG_FILE="$TMP/rep.log" os_support_report >/dev/null 2>&1; }
 check "report never fails"  _t_report
+# the recommended base (operator 2026-09-23) -- named where it helps, silent where it does not
+# the report's output is captured, never piped into grep -q: that closes the pipe early and
+# "set -o pipefail" would then read the writer's SIGPIPE as a failed check
+_t_report_says() {
+    local id="$1" ver="$2" code="$3" like="$4" want="$5" out
+    detect "$id" "$ver" "$code" "$like" >/dev/null
+    out="$(LOG_FILE="$TMP/rep-$id.log" os_support_report 2>&1)"
+    [[ "$out" == *"$want"* ]]
+}
+_t_rec_named()    { _t_report_says sles 15.6 '' '' "$RECOMMENDED_OS"; }
+_t_rec_untested() { _t_report_says debian 14 forky '' "$RECOMMENDED_OS"; }
+_t_rec_quiet()    { ! _t_report_says debian 12 bookworm '' "$RECOMMENDED_OS"; }
+_t_rec_self()     { ! _t_report_says ubuntu 24.04 noble debian "Recommended base"; }
+check "partial names the recommendation"  _t_rec_named
+check "untested names the recommendation" _t_rec_untested
+check "a full release is not nagged"      _t_rec_quiet
+check "the recommended one names itself not" _t_rec_self
+_t_rec_is_full() { [ "${OS_SUPPORT[$RECOMMENDED_OS_KEY]%%|*}" = "full" ]; }
+check "the recommendation is a full row"  _t_rec_is_full
+_t_rec_once() { [ "$(grep -c '^RECOMMENDED_OS=' "$ROOT/lib/os.sh")" = "1" ]; }
+check "the recommendation stands in one place" _t_rec_once
+_t_rec_readme() { grep -q "Ubuntu 24.04 LTS" "$ROOT/README.md"; }
+check "the README names it too"           _t_rec_readme
 detect ubuntu 24.04 noble debian >/dev/null
 check "sshd service debian" [ "$(sshd_service)" = "ssh" ]
 check "sudo group debian"   [ "$(sudo_group)" = "sudo" ]
@@ -164,8 +187,21 @@ check "step 7 stops on an unreadable address" _t_git_bad
 check "step 7 never prompts" [ "$(TOOLSERVER_GIT="$TMP/nowhere" _git_readable >/dev/null 2>&1; echo "$GIT_TERMINAL_PROMPT")" = "0" ]
 _t_no_keys() { ! grep -qE '^[[:space:]]*(run[[:space:]]+)?ssh-keygen|api.github.com|ask_secret|IdentitiesOnly' "$ROOT/steps/70-toolserver.sh"; }
 check "step 7 carries no key apparatus" _t_no_keys
-out="$(printf '\n' | { ask v "Q" dflt; echo "$v"; })"
+# ask prints its question block first (structured, one line per answer), so the value is the
+# LAST line -- same as the pick_option checks above
+out="$(printf '\n' | { ask v "Q" dflt; echo "$v"; } | tail -1)"
 check "ask keeps default"        [ "$out" = "dflt" ]
+out="$(printf '\n' | { ask v "Git URL of the Toolserver (public address: no credentials; private: ssh address)" x; } | sed -n '2p')"
+check "a long aside gets its own line" [ "$out" = "  (public address: no credentials; private: ssh address)" ]
+out="$(printf '\n' | { ask v "SMTP relay port (submission)" 587; } | sed -n '1p')"
+check "a short aside stays in the line" [ "$out" = "SMTP relay port (submission)" ]
+_t_one_column() {
+    # every answer of a question prints in the same column -- numbers and h/b alike
+    local out
+    out="$(printf '\n' | confirm "Q?" y 2>&1 | sed -n '2p;4p' | sed 's/[^ ].*//' | sort -u)"
+    [ "$(printf '%s' "$out" | wc -l)" = "0" ]
+}
+check "numbers and h/b share a column" _t_one_column
 check "confirm default n"        bash -c '. "$0/lib/common.sh"; ! confirm "Q?" n < /dev/null' "$ROOT"
 check "confirm 1 = yes"          bash -c '. "$0/lib/common.sh"; printf "1\n" | confirm "Q?" n' "$ROOT"
 check "confirm 2 = no"           bash -c '. "$0/lib/common.sh"; ! printf "2\n" | confirm "Q?" y' "$ROOT"

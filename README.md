@@ -44,6 +44,12 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
 
 ## Quick start on a fresh machine
 
+**Recommended base: Ubuntu 24.04 LTS.** Both Docker and CrowdSec publish packages for it,
+so nothing has to be substituted, and it is maintained until 2029. Debian 12, Debian 13,
+RHEL/Rocky/Alma 8-10 and Fedora 41/42 install just as completely; SLES and openSUSE work
+with two named substitutions. The full picture is in *Which distributions it runs on*
+below, and the installer tells you which case your machine is before the first step runs.
+
 One address, one command, as root:
 
 ```bash
@@ -114,7 +120,11 @@ src/                    Toolserver checkout for step 7 (gitignored)
 
 Four families, and the installer says which case yours is **before** the first step runs
 (`os_support_report`). The table lives in `OS_SUPPORT` in `lib/os.sh`; the entries below
-were measured on 2026-09-23 against the vendors' own repositories.
+were measured on 2026-09-23 against the vendors' own repositories. The recommended base
+for a new machine is `RECOMMENDED_OS` in the same file -- **Ubuntu 24.04 LTS**, the one
+combination where nothing at all is substituted. It is a recommendation, not a gate: every
+row marked *full* installs just as completely, and the installer only names the
+recommendation on a machine that has to substitute something or that nobody has tried.
 
 | Distribution | Docker | Attack blocking | Verdict |
 |---|---|---|---|

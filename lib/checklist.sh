@@ -77,7 +77,7 @@ pick_option() {
     local -n _target="$1"
     local prompt="$2" default="$3" options="$4" helpkey="${5:-}" i reply dflt=0
     IFS=';' read -ra _opts <<< "$options"
-    echo "$prompt"
+    _prompt_headline "$prompt"
     for i in "${!_opts[@]}"; do
         printf '  %2d) %s\n' "$((i + 1))" "${_opts[$i]#*=}"
         [[ "${_opts[$i]%%=*}" == "$default" ]] && dflt=$((i + 1))

@@ -46,6 +46,15 @@ declare -A OS_SUPPORT=(
     [sles-15]="partial|Docker publishes nothing for SUSE -- the distribution's own docker and docker-compose are installed. CrowdSec has no SUSE packages at all (its repository is empty): fail2ban from the distribution protects SSH instead."
     [opensuse-leap-15]="partial|Docker publishes nothing for SUSE -- the distribution's own docker and docker-compose are installed. CrowdSec has no SUSE packages at all (its repository is empty): fail2ban from the distribution protects SSH instead."
 )
+# The recommended base (operator's decision 2026-09-23). It is a recommendation, never a
+# gate: every "full" line above installs just as completely. Ubuntu 24.04 LTS is named
+# because it is the only combination where nothing at all is substituted -- both vendors
+# publish for it, and it is maintained until 2029. Named in ONE place; the report and the
+# README both take it from here.
+RECOMMENDED_OS_KEY="ubuntu-24.04"
+RECOMMENDED_OS="Ubuntu 24.04 LTS"
+RECOMMENDED_OS_WHY="both Docker and CrowdSec publish for it, so nothing has to be substituted; maintained until 2029"
+
 declare -A OS_SUPPORT_FAMILY=(
     [debian]="untested|This Debian or Ubuntu release is newer than the table. Everything is tried; a vendor repository that does not carry it yet is noticed and an older release of it is used."
     [rhel]="untested|This Red Hat family release is not in the table. Everything is tried; a vendor repository that does not carry it yet is noticed."
@@ -99,6 +108,15 @@ _os_support_entry() {
 os_support_level() { local e; e="$(_os_support_entry)"; printf '%s' "${e%%|*}"; }
 os_support_note()  { local e; e="$(_os_support_entry)"; printf '%s' "${e#*|}"; }
 
+# _os_recommendation -> names the recommended base, but only where it helps: on a machine
+# that has to substitute something or that nobody has looked at. A fully supported Debian 12
+# is not nagged at -- a recommendation repeated where it changes nothing is noise.
+_os_recommendation() {
+    [[ "$(os_key)" == "$RECOMMENDED_OS_KEY" ]] && return 0
+    log_info "  Recommended base for a NEW machine: $RECOMMENDED_OS -- $RECOMMENDED_OS_WHY."
+    log_info "  This installation continues here; the recommendation is for the next fresh host."
+}
+
 # os_support_report -> says what this machine is in for, BEFORE the first step runs.
 # Never refuses: an untested release is a warning, and the operator decides.
 os_support_report() {
@@ -112,11 +130,13 @@ os_support_report() {
         partial)
             log_warn "$OS_PRETTY is supported with one part missing:"
             log_warn "  $note"
+            _os_recommendation
             ;;
         *)
             log_warn "$OS_PRETTY is not in the table of measured distributions."
             log_warn "  $note"
             log_warn "  The commands of the $OS_FAMILY family run. Watch the log, and tell us how it went."
+            _os_recommendation
             ;;
     esac
     os_proven && log_ok "  A complete run on this release has been watched: ${OS_PROVEN[$(os_key)]}" \
