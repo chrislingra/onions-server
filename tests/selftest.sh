@@ -178,6 +178,22 @@ _t_help_items() {
 }
 check "every checklist item has help" _t_help_items
 
+echo "== CrowdSec: a registration without a key in the config is not a registration"
+. "$ROOT/steps/60-hardening.sh"
+_t_key() {
+    local content="$1" want="$2" dir="$TMP/bouncers" rc=0
+    rm -rf "$dir"; mkdir -p "$dir"
+    printf '%s\n' "$content" > "$dir/crowdsec-firewall-bouncer.yaml"
+    _bouncer_key_present "$dir" || rc=1
+    [ "$rc" = "$want" ]
+}
+check "placeholder counts as missing" _t_key 'api_key: ${API_KEY}' 1
+check "empty counts as missing"       _t_key 'api_key:' 1
+check "a real key counts"             _t_key 'api_key: abc123XYZ' 0
+check "a quoted key counts"           _t_key 'api_key: "abc123XYZ"' 0
+_t_key_nodir() { local rc=0; _bouncer_key_present "$TMP/gibtesnicht" || rc=1; [ "$rc" = "1" ]; }
+check "no config at all = missing"    _t_key_nodir
+
 echo "== third-party apt repositories follow the release cycle late"
 # apt_repo_dist must never propose a codename NEWER than this host's, and must fall back to
 # the newest older one the repository actually carries (the trixie/CrowdSec case, 2026-09-23).

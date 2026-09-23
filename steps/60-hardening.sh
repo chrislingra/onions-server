@@ -161,10 +161,18 @@ _hard_crowdsec() {
     fi
     log_ok "Bouncer package: $bouncer"
 
+    # A registration is only worth something when the key it produced is in the bouncer's
+    # config. A repaired install lands exactly between the two: the bouncer was registered in
+    # an earlier run, the package that reads the key was installed only now, and its config
+    # still carries the packaged placeholder. Asking only "is it registered?" would leave it
+    # there for good, with a bouncer that starts and authenticates against nothing. So the
+    # config decides, and a name that is registered without a usable key is registered again.
     local name="firewall-bouncer-$(hostname)" key conf
-    if cscli bouncers list -o raw 2>/dev/null | grep -q "^$name,"; then
-        log_ok "Bouncer $name already registered."
+    if _bouncer_key_present; then
+        log_ok "Bouncer $name is registered and its key is in the configuration."
     else
+        cscli bouncers delete "$name" >/dev/null 2>&1 \
+            && log_info "Bouncer $name was registered without a usable key -- registering again."
         key="$(cscli bouncers add "$name" -o raw)"
         for conf in /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml /etc/crowdsec/bouncers/crowdsec-firewall-bouncer-nftables.yaml; do
             [[ -f "$conf" ]] || continue
@@ -172,6 +180,7 @@ _hard_crowdsec() {
             sed -i "s|^api_key:.*|api_key: $key|" "$conf"
         done
         unset key
+        _bouncer_key_present || { log_err "The bouncer's configuration still has no api_key -- look into /etc/crowdsec/bouncers/."; return 1; }
         svc_enable_now crowdsec-firewall-bouncer
         svc_restart crowdsec-firewall-bouncer
     fi
@@ -183,6 +192,23 @@ _hard_crowdsec() {
     fi
     log_ok "Bouncer active -- CrowdSec's decisions reach the firewall."
     cscli bouncers list | tee -a "$LOG_FILE"
+}
+
+# _bouncer_key_present [DIR] -> 0 when one of the bouncer configs in DIR carries a real
+# api_key. The packaged default is the literal ${API_KEY}; an empty value, "none" and "null"
+# count as missing too. DIR is a parameter so the self-test can measure the real function
+# instead of a copy of it. Nothing of the key itself is printed or logged.
+_bouncer_key_present() {
+    local dir="${1:-/etc/crowdsec/bouncers}" conf value
+    for conf in "$dir"/crowdsec-firewall-bouncer.yaml "$dir"/crowdsec-firewall-bouncer-nftables.yaml; do
+        [[ -f "$conf" ]] || continue
+        value="$(sed -n 's/^api_key:[[:space:]]*//p' "$conf" | head -1 | tr -d "\"' ")"
+        case "$value" in
+            ''|'${API_KEY}'|none|null) continue ;;
+            *) return 0 ;;
+        esac
+    done
+    return 1
 }
 
 # The package source for CrowdSec. The vendor repository carries current versions but lags the
