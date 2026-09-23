@@ -178,6 +178,33 @@ _t_help_items() {
 }
 check "every checklist item has help" _t_help_items
 
+echo "== a broken package source must not block the installation"
+# one unusable source stops apt-get update with exit 100 -- and with it every step. The
+# repair either rewrites the release it names or switches the file off; it never guesses.
+detect debian 13 trixie '' >/dev/null
+_t_src() {
+    local carries="$1" content="$2" want="$3" dir="$TMP/aptsrc" rc=0 out
+    rm -rf "$dir"; mkdir -p "$dir"
+    printf '%s\n' "$content" > "$dir/probe.list"
+    _url_ok() { case "$1" in *"/dists/${carries}/Release") return 0 ;; *) return 22 ;; esac; }
+    _apt_list_repair "$dir/probe.list" >/dev/null 2>&1 || rc=1
+    unset -f _url_ok
+    if [[ -f "$dir/probe.list" ]]; then out="changed:$(sed -n '1p' "$dir/probe.list")"; else out="disabled"; fi
+    (( rc == 0 )) || out="untouched"
+    [ "$out" = "$want" ]
+}
+check "broken suite is rewritten" _t_src bookworm \
+    'deb [signed-by=/x.gpg] https://packagecloud.io/crowdsec/crowdsec/debian/ trixie main' \
+    'changed:deb [signed-by=/x.gpg] https://packagecloud.io/crowdsec/crowdsec/debian/ bookworm main'
+check "a working source stays" _t_src trixie \
+    'deb https://download.docker.com/linux/debian trixie stable' 'untouched'
+check "hopeless source is switched off" _t_src nirgends \
+    'deb https://example.invalid/repo trixie main' 'disabled'
+check "a comment is no source" _t_src nirgends \
+    '# deb https://example.invalid/repo trixie main' 'untouched'
+_t_flat() { _t_src nirgends 'deb https://example.invalid/repo ./' 'untouched'; }
+check "flat repo is left alone" _t_flat
+
 echo "== CrowdSec: a registration without a key in the config is not a registration"
 . "$ROOT/steps/60-hardening.sh"
 _t_key() {

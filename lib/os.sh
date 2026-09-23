@@ -82,10 +82,143 @@ apt_repo_dist() {
     return 1
 }
 
+# _url_ok URL -> 0 when the address answers without an error status. Uses whatever is on the
+# machine; if neither curl nor wget is there, it says "unknown" (2) and nothing is repaired
+# on a guess.
+_url_ok() {
+    local url="$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 20 -o /dev/null "$url" 2>/dev/null
+        return $?
+    fi
+    if command -v wget >/dev/null 2>&1; then
+        wget -q --timeout=20 --tries=1 -O /dev/null "$url" 2>/dev/null
+        return $?
+    fi
+    return 2
+}
+
+# apt_sources_repair -> looks at every extra package source, repairs the ones whose repository
+# does not carry the release they name, and switches off the ones that cannot be repaired.
+# Returns 0 when it changed something, 1 when it found nothing to change.
+#
+# Why this exists (operator 2026-09-23, on the host of the trixie run): a single broken source
+# stops apt-get update with exit 100 -- and with it EVERY step of this installer, including
+# the first one, which only wants to install curl and git. The source that broke it had been
+# written by an earlier run of step 6 for a release CrowdSec does not publish. Repairing
+# CrowdSec alone was not enough: the file was still lying there, and step 1 never got far
+# enough to reach step 6. A leftover source of a third party must not be able to block the
+# installation of the machine.
+apt_sources_repair() {
+    [[ "$OS_FAMILY" == "debian" ]] || return 1
+    local file changed=1
+    shopt -s nullglob
+    for file in /etc/apt/sources.list.d/*.list; do
+        _apt_list_repair "$file" && changed=0
+    done
+    for file in /etc/apt/sources.list.d/*.sources; do
+        _apt_deb822_repair "$file" && changed=0
+    done
+    shopt -u nullglob
+    return "$changed"
+}
+
+# _apt_list_repair FILE -> 0 when the file was rewritten or switched off.
+_apt_list_repair() {
+    local file="$1" line url suite i rc new_suite touched=1
+    local -a parts
+    local tmp; tmp="$(mktemp)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ ! "$line" =~ ^[[:space:]]*deb(-src)?[[:space:]] ]]; then
+            printf '%s\n' "$line" >> "$tmp"; continue
+        fi
+        read -ra parts <<< "$line"
+        i=1
+        # an option block [arch=... signed-by=...] may span several words
+        if [[ "${parts[1]:-}" == \[* ]]; then
+            while (( i < ${#parts[@]} )) && [[ "${parts[$i]}" != *\] ]]; do i=$((i + 1)); done
+            i=$((i + 1))
+        fi
+        url="${parts[$i]:-}"; suite="${parts[$((i + 1))]:-}"
+        # only repositories with the usual dists/ layout can be asked; a flat repo ends in /
+        if [[ "$url" != http* || -z "$suite" || "$suite" == */ ]]; then
+            printf '%s\n' "$line" >> "$tmp"; continue
+        fi
+        _url_ok "${url%/}/dists/${suite}/Release"; rc=$?
+        if (( rc == 0 )); then printf '%s\n' "$line" >> "$tmp"; continue; fi
+        if (( rc == 2 )); then
+            log_warn "Cannot check $url (neither curl nor wget here) -- leaving ${file##*/} alone."
+            printf '%s\n' "$line" >> "$tmp"; continue
+        fi
+        new_suite="$(apt_repo_dist "$url")" || new_suite=""
+        if [[ -n "$new_suite" ]]; then
+            log_warn "${file##*/}: $url has nothing for '$suite' -- using '$new_suite' instead."
+            printf '%s\n' "${line/ $suite / $new_suite }" >> "$tmp"
+            touched=0
+        else
+            rm -f "$tmp"
+            backup_file "$file"
+            mv "$file" "$file.disabled"
+            log_err "${file##*/}: $url publishes nothing for $OS_ID $OS_CODENAME nor for any earlier release."
+            log_err "  The source is switched off (now ${file##*/}.disabled) so the rest of the installation can run."
+            log_err "  Whatever it was meant to deliver is NOT installed -- the step that needs it will say so."
+            return 0
+        fi
+    done < "$file"
+    if (( touched == 0 )); then
+        backup_file "$file"
+        cat "$tmp" > "$file"
+        rm -f "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# _apt_deb822_repair FILE -> the same for the newer deb822 form (URIs:/Suites:).
+# A file with several suites or several URIs is not rewritten -- it is reported and left
+# alone. Guessing which combination was meant would be worse than saying so.
+_apt_deb822_repair() {
+    local file="$1" uris suites rc new_suite
+    uris="$(sed -n 's/^[Uu][Rr][Ii][Ss]:[[:space:]]*//p' "$file" | head -1)"
+    suites="$(sed -n 's/^[Ss][Uu][Ii][Tt][Ee][Ss]:[[:space:]]*//p' "$file" | head -1)"
+    [[ "$uris" == http* && -n "$suites" ]] || return 1
+    [[ "$uris" != *" "* && "$suites" != *" "* ]] || { log_warn "${file##*/}: several URIs or suites -- not touched."; return 1; }
+    _url_ok "${uris%/}/dists/${suites}/Release"; rc=$?
+    (( rc == 0 )) && return 1
+    if (( rc == 2 )); then
+        log_warn "Cannot check $uris (neither curl nor wget here) -- leaving ${file##*/} alone."
+        return 1
+    fi
+    new_suite="$(apt_repo_dist "$uris")" || new_suite=""
+    backup_file "$file"
+    if [[ -n "$new_suite" ]]; then
+        sed -i "s/^\([Ss][Uu][Ii][Tt][Ee][Ss]:[[:space:]]*\).*$/\1${new_suite}/" "$file"
+        log_warn "${file##*/}: $uris has nothing for '$suites' -- using '$new_suite' instead."
+    else
+        mv "$file" "$file.disabled"
+        log_err "${file##*/}: $uris publishes nothing for $OS_ID $OS_CODENAME nor for any earlier release -- source switched off."
+    fi
+    return 0
+}
+
 # --- packages -----------------------------------------------------------------------------
+# A failing refresh is not passed on blindly: apt stops on ONE unusable source, and that one
+# is usually a leftover of an earlier run. Repair it, then ask again -- and if there was
+# nothing to repair, the cause is elsewhere and the failure stands.
 pkg_refresh() {
     case "$OS_FAMILY" in
-        debian) run apt-get update -qq ;;
+        debian)
+            if run apt-get update -qq; then return 0; fi
+            log_warn "apt-get update failed. Looking for a package source that cannot work..."
+            if apt_sources_repair; then
+                log_info "Asking again with the repaired sources."
+                run apt-get update -qq
+            else
+                log_err "No unusable package source found -- the cause is elsewhere (network, disk, or a mirror of the distribution). The lines above say which source complained."
+                return 1
+            fi
+            ;;
         rhel)   run dnf -q makecache ;;
         suse)   run zypper --non-interactive refresh ;;
     esac
