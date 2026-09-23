@@ -155,7 +155,8 @@ main() {
         exit $?
     fi
     log_info "onions-server started on $OS_PRETTY ($OS_FAMILY family), code $INSTALL_ROOT, instance $INSTANCE_DIR"
-    os_measured || _log_line "WARN" "not yet proven on $(os_key) -- the family's commands run, watch the log"
+    # what this machine is in for -- said here, before anything is installed, not in step 6
+    os_support_report
     main_menu
 }
 

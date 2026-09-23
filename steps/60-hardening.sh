@@ -3,25 +3,27 @@
 # The SMTP password is asked hidden and written only to /etc/msmtprc (mode 600, root).
 # Sourced by install.sh.
 
-STEP_60_TITLE="Hardening (mail relay, CrowdSec, automatic security updates)"
+STEP_60_TITLE="Hardening (mail relay, attack blocking, automatic security updates)"
 
 # The recommended set (operator 2026-09-17): mail relay, CrowdSec, automatic security
 # updates. rkhunter and Docker Scout stay available as extras, not in the set.
 step_60_run() {
     heading "$STEP_60_TITLE"
-    local pick
+    # The name of the blocking tool is not written into the menu: on SUSE it is fail2ban,
+    # because CrowdSec has no packages there at all (lib/os.sh, intrusion_tool).
+    local pick tool; tool="$(intrusion_tool)"
     pick_option pick "Which part" set step60.part \
-        "set=Recommended set: mail relay, CrowdSec, automatic security updates;mail=Mail relay only;crowdsec=CrowdSec only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back"
+        "set=Recommended set: mail relay, $tool, automatic security updates;mail=Mail relay only;crowdsec=$tool only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back"
     # Each part reports for itself, and one failing part does not swallow the others: until
     # 2026-09-23 this was an && chain that skipped everything after the first failure -- and
     # marked the step done regardless. Hardening that half ran must not look finished.
     local rc=0
     case "$pick" in
         set)          _hard_mail        || rc=1
-                      _hard_crowdsec    || rc=1
+                      _hard_intrusion   || rc=1
                       _hard_autoupdates || rc=1 ;;
         mail)         _hard_mail        || rc=1 ;;
-        crowdsec)     _hard_crowdsec    || rc=1 ;;
+        crowdsec)     _hard_intrusion   || rc=1 ;;
         updates)      _hard_autoupdates || rc=1 ;;
         rkhunter)     _hard_rkhunter    || rc=1 ;;
         scout)        _hard_scout       || rc=1 ;;
@@ -135,6 +137,55 @@ EOF
     fi
 }
 
+# Blocking attackers: CrowdSec where it exists, fail2ban on SUSE where it does not. The
+# choice is made once, in lib/os.sh, and never asked again here.
+_hard_intrusion() {
+    case "$(intrusion_tool)" in
+        fail2ban) _hard_fail2ban ;;
+        *)        _hard_crowdsec ;;
+    esac
+}
+
+# fail2ban is what SUSE has: CrowdSec's SUSE repository exists but is empty (primary.xml.gz
+# says packages="0", stamped 2021), and no OBS project carries it either -- measured
+# 2026-09-23. fail2ban 0.11.2 ships with Leap 15.6. It does less than CrowdSec (no shared
+# blocklists, no hub) and that is said out loud rather than papered over; what it does do is
+# the part that matters most here: repeated failed SSH logins are banned.
+_hard_fail2ban() {
+    heading "fail2ban (SUSE has no CrowdSec packages)"
+    log_info "CrowdSec publishes nothing for SUSE. fail2ban from the distribution takes its place:"
+    log_info "  it watches the SSH log and bans an address after repeated failures. No shared"
+    log_info "  blocklists and no hub -- that part of CrowdSec has no substitute here."
+    pkg_install fail2ban || { log_err "fail2ban is not installable -- see above."; return 1; }
+    backup_file /etc/fail2ban/jail.d/onions.local
+    mkdir -p /etc/fail2ban/jail.d
+    cat > /etc/fail2ban/jail.d/onions.local <<EOF
+# onions-server, step 6 -- written by the installer, edit and it stays edited (backed up first)
+[DEFAULT]
+backend  = systemd
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled  = true
+EOF
+    svc_enable_now fail2ban
+    if ! svc_active fail2ban; then
+        log_err "fail2ban is installed but NOT running -- nothing is blocked. Its own words:"
+        journalctl -u fail2ban -n 20 --no-pager 2>&1 | tee -a "$LOG_FILE" || true
+        return 1
+    fi
+    if fail2ban-client status sshd >/dev/null 2>&1; then
+        log_ok "fail2ban active, the sshd jail is watching (5 failures in 10 minutes = 1 hour ban)."
+        fail2ban-client status sshd | tee -a "$LOG_FILE"
+    else
+        log_err "fail2ban runs, but the sshd jail is not up -- nothing is blocked. fail2ban-client status:"
+        fail2ban-client status 2>&1 | tee -a "$LOG_FILE" || true
+        return 1
+    fi
+}
+
 # CrowdSec = the detector (crowdsec) PLUS the bouncer that turns its decisions into firewall
 # rules. Without the bouncer nothing is blocked, so this function fails closed: no running
 # bouncer, no "done". Until 2026-09-23 it only warned, and a Debian trixie install ended with
@@ -244,7 +295,9 @@ _crowdsec_repo() {
             return 0
             ;;
         suse)
-            log_err "CrowdSec has no packagecloud repository for SUSE -- install it by hand (docs.crowdsec.net) and rerun."
+            # unreachable: _hard_intrusion sends SUSE to fail2ban. Kept as the honest answer
+            # if anyone ever calls this directly.
+            log_err "CrowdSec has no usable SUSE packages (its repository is empty) -- fail2ban is used there, see _hard_fail2ban."
             return 1
             ;;
     esac

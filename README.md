@@ -110,9 +110,42 @@ src/                    Toolserver checkout for step 7 (gitignored)
 /opt/<domain>/          the instance: site.env, state/ (markers, backups), logs/
 ```
 
+## Which distributions it runs on
+
+Four families, and the installer says which case yours is **before** the first step runs
+(`os_support_report`). The table lives in `OS_SUPPORT` in `lib/os.sh`; the entries below
+were measured on 2026-09-23 against the vendors' own repositories.
+
+| Distribution | Docker | Attack blocking | Verdict |
+|---|---|---|---|
+| Ubuntu 22.04 / 24.04 LTS | vendor | CrowdSec | full |
+| Debian 12 (bookworm) | vendor | CrowdSec | full |
+| Debian 13 (trixie) | vendor | CrowdSec, **bookworm packages** | full |
+| RHEL / Rocky / Alma 8, 9, 10 | vendor | CrowdSec (`el/N`) | full |
+| Fedora 41 / 42 | vendor | CrowdSec | full |
+| SLES 15 / openSUSE Leap 15.6 | **distribution's own** | **fail2ban** | partial |
+
+The two gaps, and why they are gaps:
+
+- **Debian 13 trixie**: CrowdSec publishes nothing for trixie (its `dists/trixie/Release`
+  is a 404). Its bookworm packages are installed instead — the same software, one release
+  behind. A vendor follows the distribution's release cycle by months; `apt_repo_dist`
+  asks the repository which release it really carries and never takes a newer one.
+- **SUSE**: Docker Inc. publishes no SUSE packages at all, so the distribution's own
+  `docker` and `docker-compose` are used. CrowdSec's SUSE repository exists but is empty
+  (`primary.xml.gz` says `packages="0"`, stamped 2021), and no OBS project carries it
+  either — so `fail2ban` from the distribution watches SSH instead. It bans repeated
+  failed logins; it has no shared blocklists and no hub, and the installer says so.
+
+A release that is not in the table is **untested**, not refused: the family's commands
+run, `pkg_refresh` notices a package source that cannot work and repairs or switches it
+off, and the report says plainly that nobody has watched this combination.
+
 ## Proving a run
 
-`OS_MEASURED` in `lib/os.sh` lists the distributions this installer ran through
-completely on a fresh machine. It is empty until the first proof. To add one: fresh VM
-or snapshot → clone → menu item `a` → every step green → Toolserver reachable → add the
-line `[<id>-<version>]="<date> <who/where>"` and commit. Nothing else counts as proven.
+`OS_PROVEN` in `lib/os.sh` lists the distributions this installer ran through completely
+on a fresh machine, watched by a person. `OS_SUPPORT` says what *can* work and is measured
+against the vendors; `OS_PROVEN` says what *has* worked end to end. It is empty until the
+first proof. To add one: fresh VM or snapshot → clone → menu item `a` → every step green →
+Toolserver reachable → add the line `[<id>-<version>]="<date> <who/where>"` and commit.
+Nothing else counts as proven.

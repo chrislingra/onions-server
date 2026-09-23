@@ -5,11 +5,57 @@
 # Families: debian (Ubuntu, Debian) | rhel (RHEL, Rocky, Alma, CentOS Stream, Fedora)
 #           | suse (SLES, openSUSE Leap)
 
-# MEASURED: distributions this installer has run through completely, with the date and
-# the version it was proven on. Anything not listed here asks the operator to confirm
-# before it starts -- the code path exists, but nobody has watched it succeed yet.
-# Add a line only after a full run on a fresh machine (README, section "Proving a run").
-declare -A OS_MEASURED=(
+# --- WHICH DISTRIBUTIONS THIS INSTALLER SUPPORTS, AND WHAT DIFFERS ON EACH -----------------
+#
+# The requirement (operator, repeated 2026-09-23: "das system sollte auf Ubuntu, Red Hat,
+# Suse und debian laufen. Ubuntu ist minimum"). This table is the answer, and it is a
+# TABLE on purpose: until 2026-09-23 the installer found out on the operator's machine, in
+# step 6, that a vendor repository had nothing for his release -- by then apt was already
+# broken and the run was over. What can be known beforehand is written down beforehand.
+#
+# The verdicts:
+#   full      every part has packages from the vendor; nothing is left out.
+#   partial   the installation runs, but a named part is not available and is replaced or
+#             skipped. Said BEFORE anything is installed, not discovered halfway.
+#   untested  this release is not in the table. The family's commands run and the runtime
+#             check in pkg_refresh catches a source that does not exist -- but nobody has
+#             looked at this combination. It is a warning, not a refusal.
+#
+# MEASURED 2026-09-23 against the vendors' own repositories (the date matters: a vendor adds
+# a release months after the distribution publishes it):
+#   Docker    has packages for ubuntu jammy/noble, debian bookworm/trixie, centos+rhel 8/9/10,
+#             fedora 41/42 -- and NOTHING for SLES or openSUSE (404).
+#   CrowdSec  has packages for ubuntu jammy/noble, debian bookworm, el 8/9/10, fedora 41 --
+#             nothing for debian trixie (404), and its SUSE repository exists but is EMPTY
+#             (primary.xml.gz says packages="0", stamped 2021). openSUSE itself carries no
+#             crowdsec either, in no OBS project -- but it does carry fail2ban 0.11.2.
+#
+# Keys are looked up in this order: <id>-<version> (ubuntu-24.04), then <id>-<major>
+# (rocky-9), then the family. A line with a second field explains what is different here;
+# os_support_report prints it before the first step runs.
+declare -A OS_SUPPORT=(
+    [ubuntu-22.04]="full|"
+    [ubuntu-24.04]="full|"
+    [debian-12]="full|"
+    [debian-13]="full|CrowdSec publishes nothing for trixie. Its bookworm packages are installed instead -- same software, one release behind."
+    [rhel-8]="full|"      [rhel-9]="full|"      [rhel-10]="full|"
+    [rocky-8]="full|"     [rocky-9]="full|"     [rocky-10]="full|"
+    [almalinux-8]="full|" [almalinux-9]="full|" [almalinux-10]="full|"
+    [centos-9]="full|"    [centos-10]="full|"
+    [fedora-41]="full|"   [fedora-42]="full|"
+    [sles-15]="partial|Docker publishes nothing for SUSE -- the distribution's own docker and docker-compose are installed. CrowdSec has no SUSE packages at all (its repository is empty): fail2ban from the distribution protects SSH instead."
+    [opensuse-leap-15]="partial|Docker publishes nothing for SUSE -- the distribution's own docker and docker-compose are installed. CrowdSec has no SUSE packages at all (its repository is empty): fail2ban from the distribution protects SSH instead."
+)
+declare -A OS_SUPPORT_FAMILY=(
+    [debian]="untested|This Debian or Ubuntu release is newer than the table. Everything is tried; a vendor repository that does not carry it yet is noticed and an older release of it is used."
+    [rhel]="untested|This Red Hat family release is not in the table. Everything is tried; a vendor repository that does not carry it yet is noticed."
+    [suse]="partial|Docker publishes nothing for SUSE -- the distribution's own docker is installed. CrowdSec has no SUSE packages at all: fail2ban from the distribution protects SSH instead."
+)
+
+# PROVEN: a full run on a fresh machine, watched by a person. The table above says what
+# CAN work and is measured against the vendors; this says what HAS worked end to end.
+# Add a line only after such a run (README, section "Proving a run").
+declare -A OS_PROVEN=(
     # [ubuntu-24.04]="2026-09-xx install.sh full run, VM xyz"
 )
 
@@ -36,8 +82,47 @@ os_detect() {
     esac
 }
 
-os_key()      { echo "${OS_ID}-${OS_VERSION}"; }
-os_measured() { [[ -n "${OS_MEASURED[$(os_key)]:-}" ]]; }
+os_key()       { echo "${OS_ID}-${OS_VERSION}"; }
+os_key_major() { echo "${OS_ID}-${OS_VERSION%%.*}"; }
+os_proven()    { [[ -n "${OS_PROVEN[$(os_key)]:-}" ]]; }
+
+# _os_support_entry -> the table line for this machine: "<verdict>|<what differs>".
+# Exact release first, then the major version, then the family.
+_os_support_entry() {
+    local entry="${OS_SUPPORT[$(os_key)]:-}"
+    [[ -n "$entry" ]] || entry="${OS_SUPPORT[$(os_key_major)]:-}"
+    [[ -n "$entry" ]] || entry="${OS_SUPPORT_FAMILY[$OS_FAMILY]:-}"
+    [[ -n "$entry" ]] || entry="untested|This distribution is not in the table."
+    printf '%s' "$entry"
+}
+
+os_support_level() { local e; e="$(_os_support_entry)"; printf '%s' "${e%%|*}"; }
+os_support_note()  { local e; e="$(_os_support_entry)"; printf '%s' "${e#*|}"; }
+
+# os_support_report -> says what this machine is in for, BEFORE the first step runs.
+# Never refuses: an untested release is a warning, and the operator decides.
+os_support_report() {
+    local level note
+    level="$(os_support_level)"; note="$(os_support_note)"
+    case "$level" in
+        full)
+            log_ok "$OS_PRETTY is fully supported: every part of the installation has packages."
+            [[ -n "$note" ]] && log_info "  $note"
+            ;;
+        partial)
+            log_warn "$OS_PRETTY is supported with one part missing:"
+            log_warn "  $note"
+            ;;
+        *)
+            log_warn "$OS_PRETTY is not in the table of measured distributions."
+            log_warn "  $note"
+            log_warn "  The commands of the $OS_FAMILY family run. Watch the log, and tell us how it went."
+            ;;
+    esac
+    os_proven && log_ok "  A complete run on this release has been watched: ${OS_PROVEN[$(os_key)]}" \
+              || log_info "  No complete run on this exact release has been recorded yet."
+    return 0
+}
 
 # --- third-party apt repositories: which codename do they really carry? ---------------------
 # apt_repo_dist BASE_URL -> prints the codename to use for that repository on this host, and
@@ -272,6 +357,11 @@ svc_enable_now() { run systemctl enable --now "$1"; }
 svc_restart()    { run systemctl restart "$1"; }
 svc_reload()     { run systemctl reload "$1"; }
 svc_active()     { systemctl is-active --quiet "$1"; }
+
+# Which tool blocks attackers on this family. CrowdSec everywhere it exists -- on SUSE it
+# does not (its repository is empty, measured 2026-09-23), and fail2ban from the
+# distribution takes the job. One name, decided here, so no step has to ask again.
+intrusion_tool() { case "$OS_FAMILY" in suse) echo fail2ban ;; *) echo crowdsec ;; esac; }
 
 sshd_service() { case "$OS_FAMILY" in debian) echo ssh ;; *) echo sshd ;; esac; }
 sudo_group()   { case "$OS_FAMILY" in debian) echo sudo ;; *) echo wheel ;; esac; }

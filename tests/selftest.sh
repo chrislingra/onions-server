@@ -48,9 +48,42 @@ check "sles -> suse"       [ "$(detect sles 15.6 '' '')" = "suse sles-15.6" ]
 check "linuxmint via ID_LIKE" [ "$(detect linuxmint 22 wilma 'ubuntu debian')" = "debian linuxmint-22" ]
 printf 'ID=plan9\nVERSION_ID=1\n' > "$TMP/os9"
 _t_unknown()  { ! ( OS_RELEASE_FILE="$TMP/os9" os_detect ); }
-_t_unproven() { ! os_measured; }
+_t_unproven() { ! os_proven; }
 check "unknown dies"       _t_unknown
 check "unproven by default" _t_unproven
+
+echo "== the support table answers BEFORE the installation, not in step 6"
+# the operator's requirement: Ubuntu, Red Hat, SUSE, Debian -- and a clear word per release
+_t_level() { detect "$1" "$2" "$3" "$4" >/dev/null; [ "$(os_support_level)" = "$5" ]; }
+check "ubuntu 24.04 full"   _t_level ubuntu 24.04 noble debian full
+check "ubuntu 22.04 full"   _t_level ubuntu 22.04 jammy debian full
+check "debian 12 full"      _t_level debian 12 bookworm '' full
+check "debian 13 full"      _t_level debian 13 trixie '' full
+check "rocky 9.4 full"      _t_level rocky 9.4 '' 'rhel centos fedora' full
+check "almalinux 10.0 full" _t_level almalinux 10.0 '' 'rhel centos fedora' full
+check "rhel 9.4 full"       _t_level rhel 9.4 '' fedora full
+check "fedora 42 full"      _t_level fedora 42 '' '' full
+check "leap 15.6 partial"   _t_level opensuse-leap 15.6 '' 'suse opensuse' partial
+check "sles 15.6 partial"   _t_level sles 15.6 '' '' partial
+check "ubuntu 26.04 untested" _t_level ubuntu 26.04 resolute debian untested
+check "debian 14 untested"  _t_level debian 14 forky '' untested
+# every partial must SAY what is missing -- a verdict without a reason helps nobody
+_t_partial_note() { detect opensuse-leap 15.6 '' suse >/dev/null; [ -n "$(os_support_note)" ]; }
+check "partial names the gap" _t_partial_note
+_t_trixie_note() { detect debian 13 trixie '' >/dev/null; os_support_note | grep -q "bookworm"; }
+check "trixie names its substitute" _t_trixie_note
+# the blocking tool follows the family, and the menu never hardcodes a name
+_t_tool_deb() { detect ubuntu 24.04 noble debian >/dev/null; [ "$(intrusion_tool)" = "crowdsec" ]; }
+_t_tool_rhel() { detect rocky 9.4 '' rhel >/dev/null; [ "$(intrusion_tool)" = "crowdsec" ]; }
+_t_tool_suse() { detect sles 15.6 '' '' >/dev/null; [ "$(intrusion_tool)" = "fail2ban" ]; }
+check "debian blocks with crowdsec" _t_tool_deb
+check "rhel blocks with crowdsec"   _t_tool_rhel
+check "suse blocks with fail2ban"   _t_tool_suse
+_t_no_hardcoded_tool() { ! grep -qE 'pick_option .*(CrowdSec only|CrowdSec, automatic)' "$ROOT/steps/60-hardening.sh"; }
+check "menu asks the family for the name" _t_no_hardcoded_tool
+# the report must run without a machine and must never refuse
+_t_report() { detect sles 15.6 '' '' >/dev/null; LOG_FILE="$TMP/rep.log" os_support_report >/dev/null 2>&1; }
+check "report never fails"  _t_report
 detect ubuntu 24.04 noble debian >/dev/null
 check "sshd service debian" [ "$(sshd_service)" = "ssh" ]
 check "sudo group debian"   [ "$(sudo_group)" = "sudo" ]
