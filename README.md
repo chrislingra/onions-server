@@ -44,12 +44,29 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
 
 ## Quick start on a fresh machine
 
+One address, one command, as root:
+
 ```bash
-# 1. git, then this repository -- no login, nothing to register
+bash <(curl -fsSL https://tools.onions.one/install)
+```
+
+That address is served by a running Toolserver (`environment/envi_install_bootstrap.sh`,
+GET `/install`). The script installs git if it is missing, clones this repository into
+`/opt/onions-server` -- or fast-forwards an existing checkout -- and hands over to
+`install.sh`. Nothing else: no login, no token, no call home.
+
+Two details that look like typos and are not. **Not** `curl ... | bash`: the installer is a
+menu and reads its answers from the terminal, and through a pipe those reads would swallow
+the script itself; the first guard refuses that form. And **not** `sudo bash <(curl ...)`:
+sudo closes the descriptor the process substitution hands over. Become root first
+(`sudo -i`), then run the line above.
+
+Without a reachable Toolserver -- the very first host of an installation -- the same thing
+by hand:
+
+```bash
 apt-get install -y git            # dnf install git / zypper install git
 git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
-
-# 2. the menu -- asks the domain, creates /opt/<domain>, shows the steps
 cd /opt/onions-server && sudo bash install.sh
 ```
 
