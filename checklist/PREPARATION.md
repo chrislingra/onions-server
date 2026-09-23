@@ -12,9 +12,13 @@ passwords are never stored -- have them at hand.
    over HTTP, so the names must resolve before Traefik starts.
 3. **Ports** -- 22, 80 and 443 reachable from the internet (provider firewall / cloud
    security group). The installer's own firewall opens exactly these.
-4. **Nothing for the bootstrap user** -- `manager` is created by step 1 with a one-time
-   password shown on the console (write it down, it must be changed at first login).
-   It is the working login of the delivered state and disappears in step 8.
+4. **A password for the bootstrap user, or nothing at all** -- `manager` is created by
+   step 1, and the step asks how you want its first password: type it yourself (at least
+   10 characters), or let it be generated. A generated one is never only on the screen --
+   it is also written to `<state>/bootstrap-password.txt`, readable by root alone, and
+   can be sent by mail. On a KVM console or a serial line there is nothing to copy with,
+   so do not rely on reading it off the screen. It must be changed at the first login,
+   and the user disappears in step 8.
 5. **Personal admins** -- for every person who will administer the host: the Linux user
    name and a password. SSH keys and the sshd hardening are **not** needed for the base
    installation: the default is "password now, SSH later in the Toolserver". Who has a
