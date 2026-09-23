@@ -73,10 +73,19 @@ banner() {
     echo "  onions-server -- base installation"
     echo "  Host: $(hostname)   Domain: $DOMAIN   Instance: $INSTANCE_DIR"
     echo "  System: $OS_PRETTY ($OS_FAMILY family)"
-    if os_measured; then
-        echo "  Proven on this distribution: ${OS_MEASURED[$(os_key)]}"
+    # the verdict belongs HERE, above the menu, not only once at start: the banner clears
+    # the screen, so a report printed before it is gone before anyone can read it
+    # (operator 2026-09-23: "wenn hinter der systemerkennung und empfehlung keine pause
+    # kommt, sieht das niemand"). One line, always visible; the detail is behind h.
+    case "$(os_support_level)" in
+        full)    echo "  Support: fully supported -- nothing has to be substituted." ;;
+        partial) echo "  Support: supported, with a named substitution (entry h explains it)." ;;
+        *)       echo "  Support: NOT YET MEASURED on $(os_key) -- watch every step." ;;
+    esac
+    if os_proven; then
+        echo "  Proven by a complete run: ${OS_PROVEN[$(os_key)]}"
     else
-        echo "  NOT YET PROVEN on $(os_key) -- watch every step (README: Proving a run)"
+        echo "  No complete run recorded yet on $(os_key) (README: Proving a run)"
     fi
     echo "  Log: $LOG_FILE"
     echo "================================================================"
@@ -155,8 +164,14 @@ main() {
         exit $?
     fi
     log_info "onions-server started on $OS_PRETTY ($OS_FAMILY family), code $INSTALL_ROOT, instance $INSTANCE_DIR"
-    # what this machine is in for -- said here, before anything is installed, not in step 6
+    # What this machine is in for -- said here, before anything is installed, not in step 6.
+    # The pause is the point: the menu's banner clears the screen, so without it the report
+    # scrolls away unread (operator 2026-09-23: "wenn hinter der systemerkennung und
+    # empfehlung keine pause kommt, sieht das niemand"). The banner carries a one-line
+    # version of the same verdict afterwards, so it stays visible.
     os_support_report
+    echo
+    pause
     main_menu
 }
 

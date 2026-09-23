@@ -107,6 +107,34 @@ _t_rec_once() { [ "$(grep -c '^RECOMMENDED_OS=' "$ROOT/lib/os.sh")" = "1" ]; }
 check "the recommendation stands in one place" _t_rec_once
 _t_rec_readme() { grep -q "Ubuntu 24.04 LTS" "$ROOT/README.md"; }
 check "the README names it too"           _t_rec_readme
+# the help key belongs LAST. Passed in the options slot it built a menu with one nonsense
+# entry and no default (2026-09-23). pick_option refuses that now; this finds it before a run.
+_t_pick_order() {
+    local out
+    out="$(sed -e ':a' -e '/\\$/{N;s/\\\n//;ta}' "$ROOT"/install.sh "$ROOT"/steps/*.sh 2>/dev/null \
+           | grep -nE 'pick_option[^=]*(step[0-9]+\.[a-z_]+)[^=]*=' || true)"
+    [[ -z "$out" ]] || { echo "help key before the options string: $out"; return 1; }
+}
+check "pick_option takes the help key last" _t_pick_order
+_t_pick_refuses() {
+    local rc=0
+    bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; . "$0/lib/checklist.sh"
+             LOG_FILE=/dev/null; pick_option v "Q" a "step60.part" </dev/null' "$ROOT" >/dev/null 2>&1 || rc=$?
+    (( rc != 0 ))
+}
+check "pick_option refuses a bad options string" _t_pick_refuses
+# every helper the banner calls must exist -- os_measured was renamed and the banner kept
+# calling it, which printed "command not found" on every screen of a live installation
+_t_banner_calls() {
+    local fn missing=""
+    for fn in os_support_level os_support_note os_proven os_key; do
+        grep -q "^${fn}()\|^${fn}() *{\|^${fn}()" "$ROOT/lib/os.sh" || missing="$missing $fn"
+    done
+    [[ -z "$missing" ]] || { echo "banner calls what does not exist:$missing"; return 1; }
+}
+check "the banner only calls helpers that exist" _t_banner_calls
+_t_no_dead_names() { ! grep -rn "os_measured\|OS_MEASURED" "$ROOT"/install.sh "$ROOT"/lib "$ROOT"/steps >/dev/null 2>&1; }
+check "the renamed os_measured is gone everywhere" _t_no_dead_names
 detect ubuntu 24.04 noble debian >/dev/null
 check "sshd service debian" [ "$(sshd_service)" = "ssh" ]
 check "sudo group debian"   [ "$(sudo_group)" = "sudo" ]

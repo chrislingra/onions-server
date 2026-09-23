@@ -382,6 +382,9 @@ svc_active()     { systemctl is-active --quiet "$1"; }
 # does not (its repository is empty, measured 2026-09-23), and fail2ban from the
 # distribution takes the job. One name, decided here, so no step has to ask again.
 intrusion_tool() { case "$OS_FAMILY" in suse) echo fail2ban ;; *) echo crowdsec ;; esac; }
+# ... and how it is written for a person to read. The package name is lower case because
+# packages are; a menu entry is not a package name.
+intrusion_tool_name() { case "$OS_FAMILY" in suse) echo "fail2ban" ;; *) echo "CrowdSec" ;; esac; }
 
 sshd_service() { case "$OS_FAMILY" in debian) echo ssh ;; *) echo sshd ;; esac; }
 sudo_group()   { case "$OS_FAMILY" in debian) echo sudo ;; *) echo wheel ;; esac; }

@@ -103,8 +103,9 @@ _bootstrap_user() {
         local pw="" mode
         echo
         echo "The first password of $user. It expires immediately: the first login changes it."
-        pick_option mode "How do you want to get it?" self step10.password \
-            "self=I type it myself now (nothing to copy afterwards);generate=Generate one and put it into a root-only file"
+        pick_option mode "How do you want to get it?" self \
+            "self=I type it myself now (nothing to copy afterwards);generate=Generate one and put it into a root-only file" \
+            step10.password
         if [[ "$mode" == "self" ]]; then
             while true; do
                 ask_secret pw "Password for $user" step10.password

@@ -76,6 +76,16 @@ _item_valid() {
 pick_option() {
     local -n _target="$1"
     local prompt="$2" default="$3" options="$4" helpkey="${5:-}" i reply dflt=0
+    # Fail closed on a wrong call instead of drawing a nonsense menu. On 2026-09-23 the help
+    # key was passed in the options slot in two places; the menu then offered the single
+    # entry "step60.part", the default was not among the entries, and the operator saw a bare
+    # "Choice:" with no default. A menu built from garbage must not be shown -- it looks like
+    # a decision and is a bug.
+    if [[ "$options" != *=* ]]; then
+        log_err "pick_option called wrongly: the options argument is '$options' and carries no 'code=Label'."
+        log_err "  Order: pick_option VAR \"Prompt\" DEFAULT \"code=Label;code=Label\" [helpkey]"
+        return 1
+    fi
     IFS=';' read -ra _opts <<< "$options"
     _prompt_headline "$prompt"
     for i in "${!_opts[@]}"; do

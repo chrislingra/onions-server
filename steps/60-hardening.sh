@@ -11,9 +11,10 @@ step_60_run() {
     heading "$STEP_60_TITLE"
     # The name of the blocking tool is not written into the menu: on SUSE it is fail2ban,
     # because CrowdSec has no packages there at all (lib/os.sh, intrusion_tool).
-    local pick tool; tool="$(intrusion_tool)"
-    pick_option pick "Which part" set step60.part \
-        "set=Recommended set: mail relay, $tool, automatic security updates;mail=Mail relay only;crowdsec=$tool only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back"
+    local pick tool; tool="$(intrusion_tool_name)"
+    pick_option pick "Which part" set \
+        "set=Recommended set: mail relay, $tool, automatic security updates;mail=Mail relay only;crowdsec=$tool only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back" \
+        step60.part
     # Each part reports for itself, and one failing part does not swallow the others: until
     # 2026-09-23 this was an && chain that skipped everything after the first failure -- and
     # marked the step done regardless. Hardening that half ran must not look finished.
