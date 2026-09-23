@@ -22,6 +22,8 @@ INSTANCE_FILE="$INSTALL_ROOT/.instance"
 BOOTSTRAP_USER="manager"   # exists from step 1 on, works in the delivered state, removed by step 8
 PLATFORM_GROUP="onions"    # owns the platform directories; every admin is a member
 
+# shellcheck source=lib/help.sh
+. "$INSTALL_ROOT/lib/help.sh"
 # shellcheck source=lib/common.sh
 . "$INSTALL_ROOT/lib/common.sh"
 # shellcheck source=lib/os.sh
@@ -44,7 +46,10 @@ instance_open() {
         echo "This host has no instance yet. The domain names it: everything of this host"
         echo "goes to /opt/<domain> (answers, state, logs); the code stays in $INSTALL_ROOT."
         while true; do
-            ask domain "Domain this server serves (e.g. example.org)"
+            # no "back" behind this one: without a domain there is no instance and nothing to
+            # go back to -- the installer would have nowhere to put its answers.
+            ask domain "Domain this server serves (e.g. example.org)" "" domain \
+                || { echo "  The domain is the one question that has no step before it."; continue; }
             is_domain "$domain" && break
             echo "  '$domain' is not a valid domain."
         done
@@ -92,13 +97,23 @@ run_step() {
     ONIONS_STEP="$n" RUN_STAMP="$RUN_STAMP" LOG_FILE="$LOG_FILE" bash "$INSTALL_ROOT/install.sh"
     local rc=$?
     checklist_load   # the step may have saved new answers
+    # PROMPT_RC_BACK is not a failure: somebody answered "b" at a question and the step left
+    # on purpose. Saying "failed" there would teach people to distrust the word.
+    (( rc == PROMPT_RC_BACK )) && { log_info "Step $((n / 10)) left on request -- it stays open."; return "$PROMPT_RC_BACK"; }
     (( rc == 0 )) || { log_err "Step $((n / 10)) failed -- see $LOG_FILE"; return 1; }
 }
 
 run_all() {
-    local n
+    local n rc
     for n in "${STEPS[@]}"; do
-        run_step "$n" || { log_err "Stopped at step $((n / 10)). Fix the cause and run 'All steps' again -- finished steps repeat harmlessly."; return 1; }
+        rc=0; run_step "$n" || rc=$?
+        (( rc == 0 )) && continue
+        if (( rc == PROMPT_RC_BACK )); then
+            log_info "Stopped at step $((n / 10)) on request. 'All steps' takes it up again -- finished steps repeat harmlessly."
+        else
+            log_err "Stopped at step $((n / 10)). Fix the cause and run 'All steps' again -- finished steps repeat harmlessly."
+        fi
+        return 1
     done
     log_ok "All steps done."
 }
@@ -111,6 +126,7 @@ main_menu() {
         for n in "${STEPS[@]}"; do status_line "$n"; done
         echo "   a) All steps in order (1-8)"
         echo "   v) Show checklist values"
+        echo "   h) Help -- what the steps do and in which order"
         echo "   q) Quit"
         echo
         read -r -p "Choice: " reply
@@ -119,8 +135,9 @@ main_menu() {
             [1-8]) run_step "$((reply * 10))" || true; pause ;;
             a|A) run_all || true; pause ;;
             v|V) checklist_show; pause ;;
+            h|H|\?) help_show menu "Main menu"; pause ;;
             q|Q) exit 0 ;;
-            *) echo "  Enter 0-8, a, v or q." ; sleep 1 ;;
+            *) echo "  Enter 0-8, a, v, h or q." ; sleep 1 ;;
         esac
     done
 }

@@ -39,6 +39,49 @@ os_detect() {
 os_key()      { echo "${OS_ID}-${OS_VERSION}"; }
 os_measured() { [[ -n "${OS_MEASURED[$(os_key)]:-}" ]]; }
 
+# --- third-party apt repositories: which codename do they really carry? ---------------------
+# apt_repo_dist BASE_URL -> prints the codename to use for that repository on this host, and
+# fails (exit 1, nothing printed) when it carries none we could use.
+#
+# Why this exists (operator 2026-09-23, on a freshly installed Debian trixie: "es kommt zu
+# fehlern"): a vendor repository follows the distribution's release cycle by months. On the
+# day trixie was installed, CrowdSec's packagecloud repository had no trixie directory at
+# all. The installer wrote the source anyway, "apt-get update" answered 404 for it, and the
+# step ran on into "Unable to locate package ..." -- ending in a hardening that blocked
+# nothing. One HTTP request per candidate turns that into a named, older but working source.
+#
+# The chain is the release order of the distribution, newest first. Only codenames OLDER than
+# this host's are tried: an older repository is a compromise, a newer one is wrong. A codename
+# this list does not know yet counts as the newest, so everything below it is fair game --
+# which is exactly what should happen the day the next release appears and this list is stale.
+apt_repo_dist() {
+    local base="$1" chain c past candidates=""
+    case "$OS_ID" in
+        debian) chain="forky trixie bookworm bullseye" ;;
+        ubuntu) chain="questing plucky oracular noble jammy focal" ;;
+        *)      chain="" ;;
+    esac
+    case " $chain " in
+        *" ${OS_CODENAME} "*) past="" ;;   # known release: start at it
+        *)                    past="yes" ;; # unknown (newer than this list): everything is older
+    esac
+    [[ -n "$OS_CODENAME" ]] && candidates="$OS_CODENAME"
+    for c in $chain; do
+        if [[ -z "$past" ]]; then
+            [[ "$c" == "$OS_CODENAME" ]] && past="yes"
+            continue
+        fi
+        candidates="$candidates $c"
+    done
+    for c in $candidates; do
+        if curl -fsS --max-time 20 -o /dev/null "${base%/}/dists/${c}/Release" 2>/dev/null; then
+            printf '%s\n' "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # --- packages -----------------------------------------------------------------------------
 pkg_refresh() {
     case "$OS_FAMILY" in
@@ -150,7 +193,14 @@ docker_install() {
             install -m 0755 -d /etc/apt/keyrings
             curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc
             chmod a+r /etc/apt/keyrings/docker.asc
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${OS_ID} ${OS_CODENAME} stable" \
+            # not blindly $OS_CODENAME: the day a new release appears, Docker's repository does
+            # not have it yet and apt would fail on a source that cannot exist (see apt_repo_dist)
+            local docker_dist
+            docker_dist="$(apt_repo_dist "https://download.docker.com/linux/${OS_ID}")" \
+                || die "Docker publishes nothing for ${OS_ID} ${OS_CODENAME} nor for any earlier release. Install docker and the compose plugin by hand, then run this step again."
+            [[ "$docker_dist" == "$OS_CODENAME" ]] \
+                || log_warn "Docker has no packages for ${OS_ID} ${OS_CODENAME} yet -- using the ${docker_dist} ones, which is what Docker itself recommends in that situation."
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${OS_ID} ${docker_dist} stable" \
                 > /etc/apt/sources.list.d/docker.list
             pkg_refresh
             pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin

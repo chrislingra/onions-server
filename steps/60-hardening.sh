@@ -10,18 +10,28 @@ STEP_60_TITLE="Hardening (mail relay, CrowdSec, automatic security updates)"
 step_60_run() {
     heading "$STEP_60_TITLE"
     local pick
-    pick_option pick "Which part" set \
+    pick_option pick "Which part" set step60.part \
         "set=Recommended set: mail relay, CrowdSec, automatic security updates;mail=Mail relay only;crowdsec=CrowdSec only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back"
+    # Each part reports for itself, and one failing part does not swallow the others: until
+    # 2026-09-23 this was an && chain that skipped everything after the first failure -- and
+    # marked the step done regardless. Hardening that half ran must not look finished.
+    local rc=0
     case "$pick" in
-        set)         _hard_mail && _hard_crowdsec && _hard_autoupdates ;;
-        mail)        _hard_mail ;;
-        crowdsec)    _hard_crowdsec ;;
-        updates)     _hard_autoupdates ;;
-        rkhunter)    _hard_rkhunter ;;
-        scout)       _hard_scout ;;
-        rkhunter_off) _hard_rkhunter_off ;;
-        back)        return 0 ;;
+        set)          _hard_mail        || rc=1
+                      _hard_crowdsec    || rc=1
+                      _hard_autoupdates || rc=1 ;;
+        mail)         _hard_mail        || rc=1 ;;
+        crowdsec)     _hard_crowdsec    || rc=1 ;;
+        updates)      _hard_autoupdates || rc=1 ;;
+        rkhunter)     _hard_rkhunter    || rc=1 ;;
+        scout)        _hard_scout       || rc=1 ;;
+        rkhunter_off) _hard_rkhunter_off || rc=1 ;;
+        back)         return 0 ;;
     esac
+    if (( rc != 0 )); then
+        log_err "Hardening is INCOMPLETE -- the part above did not finish. The step stays open on purpose; fix the cause and run it again."
+        return 1
+    fi
     step_done 60
 }
 
@@ -80,7 +90,7 @@ _hard_mail() {
     checklist_require NOTIFICATION_EMAIL SENDER_EMAIL SMTP_SERVER SMTP_PORT SMTP_USER
     pkg_install msmtp msmtp-mta
     local pw
-    ask_secret pw "Password of $SMTP_USER at $SMTP_SERVER"
+    ask_secret pw "Password of $SMTP_USER at $SMTP_SERVER" SMTP_USER
     backup_file /etc/msmtprc
     umask 077
     cat > /etc/msmtprc <<EOF
@@ -116,7 +126,7 @@ prefix="[$(hostname -f 2>/dev/null || hostname)]"
 EOF
     chmod 755 /usr/local/bin/system-mail
     log_ok "Relay configured; wrapper /usr/local/bin/system-mail."
-    if confirm "Send a test mail to $NOTIFICATION_EMAIL?" y; then
+    if confirm "Send a test mail to $NOTIFICATION_EMAIL?" y step60.testmail; then
         if printf 'Test mail from %s (onions-server step 60).\n' "$(hostname)" | system-mail -s "Relay test" "$NOTIFICATION_EMAIL"; then
             log_ok "Test mail handed to the relay -- check the mailbox."
         else
@@ -125,20 +135,32 @@ EOF
     fi
 }
 
+# CrowdSec = the detector (crowdsec) PLUS the bouncer that turns its decisions into firewall
+# rules. Without the bouncer nothing is blocked, so this function fails closed: no running
+# bouncer, no "done". Until 2026-09-23 it only warned, and a Debian trixie install ended with
+# "[WARN] Bouncer NOT running -- nothing is blocked yet" in a step that called itself finished.
 _hard_crowdsec() {
     heading "CrowdSec"
-    case "$OS_FAMILY" in
-        debian) curl -fsSL https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash ;;
-        rhel)   curl -fsSL https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash ;;
-        suse)   log_err "CrowdSec has no packagecloud repository for SUSE -- install it by hand (docs.crowdsec.net) and rerun."; return 1 ;;
-    esac
+    _crowdsec_repo || return 1
     pkg_refresh
-    pkg_install crowdsec
+    pkg_install crowdsec || { log_err "crowdsec is not installable -- see the messages above."; return 1; }
     svc_enable_now crowdsec
-    if ! pkg_install crowdsec-firewall-bouncer-nftables; then
-        log_warn "nftables bouncer not installable, trying the iptables one."
-        pkg_install crowdsec-firewall-bouncer-iptables
+
+    # The bouncer's package name differs by source: the vendor repository splits it by firewall
+    # backend, the distribution's own ships one package for both. Take the first that installs.
+    local bouncer="" candidate
+    for candidate in crowdsec-firewall-bouncer-nftables crowdsec-firewall-bouncer-iptables crowdsec-firewall-bouncer; do
+        if pkg_install "$candidate"; then bouncer="$candidate"; break; fi
+        log_info "$candidate is not available from the configured sources, trying the next name."
+    done
+    if [[ -z "$bouncer" ]]; then
+        log_err "No firewall bouncer could be installed -- CrowdSec would detect attacks and block nothing."
+        log_err "  Sources in use: $(ls /etc/apt/sources.list.d/ 2>/dev/null | tr '\n' ' ')"
+        log_err "  Install one by hand (docs.crowdsec.net, 'Firewall Bouncer') and run this step again."
+        return 1
     fi
+    log_ok "Bouncer package: $bouncer"
+
     local name="firewall-bouncer-$(hostname)" key conf
     if cscli bouncers list -o raw 2>/dev/null | grep -q "^$name,"; then
         log_ok "Bouncer $name already registered."
@@ -150,11 +172,56 @@ _hard_crowdsec() {
             sed -i "s|^api_key:.*|api_key: $key|" "$conf"
         done
         unset key
+        svc_enable_now crowdsec-firewall-bouncer
         svc_restart crowdsec-firewall-bouncer
     fi
     svc_reload crowdsec
-    svc_active crowdsec-firewall-bouncer && log_ok "Bouncer active." || log_warn "Bouncer NOT running -- nothing is blocked yet."
+    if ! svc_active crowdsec-firewall-bouncer; then
+        log_err "The bouncer is installed but NOT running -- nothing is blocked. Its own words:"
+        journalctl -u crowdsec-firewall-bouncer -n 20 --no-pager 2>&1 | tee -a "$LOG_FILE" || true
+        return 1
+    fi
+    log_ok "Bouncer active -- CrowdSec's decisions reach the firewall."
     cscli bouncers list | tee -a "$LOG_FILE"
+}
+
+# The package source for CrowdSec. The vendor repository carries current versions but lags the
+# distribution's release cycle; the distribution's own is always there but can be years old.
+# Prefer the vendor's for a codename it actually serves -- and say plainly which one it is.
+_crowdsec_repo() {
+    local dist
+    case "$OS_FAMILY" in
+        debian)
+            if dist="$(apt_repo_dist "https://packagecloud.io/crowdsec/crowdsec/${OS_ID}")"; then
+                [[ "$dist" == "$OS_CODENAME" ]] \
+                    || log_warn "CrowdSec publishes nothing for ${OS_ID} ${OS_CODENAME} yet -- taking its ${dist} packages, which run here."
+                # os/dist are the packagecloud script's own override variables: without them it
+                # asks lsb_release, writes a source for a codename the repository does not have,
+                # and every later apt-get update fails with 404.
+                curl -fsSL https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh \
+                    | os="$OS_ID" dist="$dist" bash
+                log_ok "CrowdSec repository: packagecloud, ${OS_ID}/${dist}."
+                return 0
+            fi
+            log_warn "CrowdSec's own repository carries nothing usable for ${OS_ID} ${OS_CODENAME}."
+            rm -f /etc/apt/sources.list.d/crowdsec_crowdsec.list
+            if apt-cache policy crowdsec 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+                log_warn "Using the packages of ${OS_PRETTY} instead -- these are older and their"
+                log_warn "  hub content may no longer update. Watch 'cscli hub list' afterwards."
+                return 0
+            fi
+            log_err "Neither CrowdSec's repository nor ${OS_PRETTY} offers a crowdsec package."
+            return 1
+            ;;
+        rhel)
+            curl -fsSL https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash
+            return 0
+            ;;
+        suse)
+            log_err "CrowdSec has no packagecloud repository for SUSE -- install it by hand (docs.crowdsec.net) and rerun."
+            return 1
+            ;;
+    esac
 }
 
 _hard_rkhunter() {
@@ -175,7 +242,7 @@ rkhunter --check --cron --skip-keypress --report-warnings-only | /usr/local/bin/
 EOF
     chmod 755 /etc/cron.daily/rkhunter
     log_ok "rkhunter installed, daily report to $NOTIFICATION_EMAIL."
-    confirm "Run the first scan now (several minutes)?" n && rkhunter --check --skip-keypress --report-warnings-only || true
+    confirm "Run the first scan now (several minutes)?" n step60.rkhunter && rkhunter --check --skip-keypress --report-warnings-only || true
 }
 
 _hard_scout() {

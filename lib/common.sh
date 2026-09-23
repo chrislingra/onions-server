@@ -34,47 +34,94 @@ require_root() {
 }
 
 # --- prompts: every decision is the same simple numbered choice ---------------------------
-# confirm "Question?" [y|n]  -> returns 0 for yes. Enter takes the default.
+# Every question offers the same two extra answers besides its own (operator 2026-09-23:
+# "jede Auswahl muss 2 weitere Optionen erhalten: hilfe und einen schritt zurueck"):
+#
+#   h  help       the explanation of this question, from lib/help.sh
+#   b  back       leave this question without answering it
+#
+# What "back" does depends on where the question is asked, and that is not a special case but
+# the structure of this installer: a step runs in its own process (see run_step in
+# install.sh), so leaving a question inside a step means leaving the step -- the main menu
+# comes back and nothing of the step was marked done. In the menu process itself (the
+# checklist) the helper returns PROMPT_RC_BACK and the asking loop goes to the previous
+# question. Nothing is ever saved on the way out: back means back, not "cancel and keep".
+#
+# The last argument of every helper is the optional help key (see lib/help.sh). A question
+# without one still offers h and gets the general text.
+PROMPT_RC_BACK=10
+
+_prompt_back() {
+    _log_line "INFO" "one step back at: ${1:-<question>}"
+    if [[ -n "${ONIONS_STEP:-}" ]]; then
+        echo "  Back to the main menu. Nothing of this step was saved."
+        exit "$PROMPT_RC_BACK"
+    fi
+    return "$PROMPT_RC_BACK"
+}
+
+_prompt_extras() {
+    echo "  h) Help -- what this question means"
+    echo "  b) One step back"
+}
+
+# confirm "Question?" [y|n] [helpkey] -> 0 for yes, 1 for no, and it never returns on "back"
+# inside a step: _prompt_back leaves the step there. This matters because confirm is nearly
+# always used in an "if", where a return code would be read as "no" -- a silent wrong answer.
 confirm() {
-    local question="$1" default="${2:-n}" reply dflt=2
+    local question="$1" default="${2:-n}" helpkey="${3:-}" reply dflt=2
     [[ "$default" == "y" ]] && dflt=1
     echo "$question"
     echo "  1) Yes"
     echo "  2) No"
+    _prompt_extras
     while true; do
         read -r -p "Choice [$dflt]: " reply
         reply="${reply:-$dflt}"
         case "$reply" in
             1|y|Y|j|J) return 0 ;;
             2|n|N)     return 1 ;;
+            h|H|\?)    help_show "$helpkey" "$question"; continue ;;
+            b|B)       _prompt_back "$question"; return "$PROMPT_RC_BACK" ;;
         esac
-        echo "  Enter 1 or 2."
+        echo "  Enter 1, 2, h or b."
     done
 }
 
-# ask VAR "Prompt" [default] -> reads into VAR, keeps default on empty input.
+# ask VAR "Prompt" [default] [helpkey] -> reads into VAR, keeps default on empty input.
+# A lone h or b is the help / back answer here too. None of the values this installer asks
+# for -- domain, user name, e-mail, key, URL -- is a single letter, so nothing is shadowed.
 ask() {
     local -n _target="$1"
-    local prompt="$2" default="${3:-}" reply
-    if [[ -n "$default" ]]; then
-        read -r -p "$prompt [$default]: " reply
-        _target="${reply:-$default}"
-    else
-        while true; do
-            read -r -p "$prompt: " reply
-            [[ -n "$reply" ]] && break
+    local prompt="$2" default="${3:-}" helpkey="${4:-}" reply
+    while true; do
+        if [[ -n "$default" ]]; then read -r -p "$prompt [$default]  (h = help, b = back): " reply
+        else                          read -r -p "$prompt  (h = help, b = back): " reply; fi
+        case "$reply" in
+            h|H|\?) help_show "$helpkey" "$prompt"; continue ;;
+            b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
+        esac
+        if [[ -z "$reply" ]]; then
+            [[ -n "$default" ]] && { _target="$default"; return 0; }
             echo "  A value is required."
-        done
+            continue
+        fi
         _target="$reply"
-    fi
+        return 0
+    done
 }
 
-# ask_secret VAR "Prompt" -> hidden input, asked twice, never logged, never written to disk.
+# ask_secret VAR "Prompt" [helpkey] -> hidden input, asked twice, never logged, never written
+# to disk. Help and back are typed at the first prompt like anywhere else.
 ask_secret() {
     local -n _target="$1"
-    local prompt="$2" first second
+    local prompt="$2" helpkey="${3:-}" first second
     while true; do
-        read -r -s -p "$prompt: " first; echo
+        read -r -s -p "$prompt  (h = help, b = back): " first; echo
+        case "$first" in
+            h|H|\?) help_show "$helpkey" "$prompt"; continue ;;
+            b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
+        esac
         [[ -n "$first" ]] || { echo "  A value is required."; continue; }
         read -r -s -p "Repeat: " second; echo
         [[ "$first" == "$second" ]] && break
@@ -93,13 +140,18 @@ choose() {
         printf '  %2d) %s\n' "$((i + 1))" "${items[$i]}" >&2
     done
     printf '   0) Cancel\n' >&2
+    _prompt_extras >&2
     while true; do
         read -r -p "$prompt [0-${#items[@]}]: " reply
+        case "$reply" in
+            h|H|\?) help_show "" "$prompt" >&2; continue ;;
+            b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
+        esac
         if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 0 && reply <= ${#items[@]} )); then
             echo "$reply"
             return 0
         fi
-        echo "  Enter a number between 0 and ${#items[@]}." >&2
+        echo "  Enter a number between 0 and ${#items[@]}, h or b." >&2
     done
 }
 

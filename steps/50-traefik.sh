@@ -25,10 +25,10 @@ step_50_run() {
     # never stored in clear text anywhere
     local pw hash
     if [[ -f "$dir/docker-compose.yml" ]] && grep -q 'basicauth.users=' "$dir/docker-compose.yml" \
-        && ! confirm "Traefik is already configured. Rewrite traefik.yml and docker-compose.yml?" n; then
+        && ! confirm "Traefik is already configured. Rewrite traefik.yml and docker-compose.yml?" n step50.rewrite; then
         log_ok "Kept the existing configuration."
     else
-        ask_secret pw "Password for the Traefik dashboard (user $ADMIN_USER)"
+        ask_secret pw "Password for the Traefik dashboard (user $ADMIN_USER)" step50.rewrite
         hash="$(openssl passwd -apr1 "$pw")"; unset pw
         hash="${hash//\$/\$\$}"   # compose interpolation: literal $ is $$
         backup_file "$dir/traefik.yml"; backup_file "$dir/docker-compose.yml"

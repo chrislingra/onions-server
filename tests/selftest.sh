@@ -33,7 +33,7 @@ INSTALL_ROOT="$ROOT"; INSTANCE_DIR="$TMP/instance"; STATE_DIR="$INSTANCE_DIR/sta
 RUN_STAMP="test"; LOG_FILE="$LOG_DIR/test.log"; SITE_ENV="$INSTANCE_DIR/site.env"; DOMAIN="example.org"
 BOOTSTRAP_USER="manager"; PLATFORM_GROUP="onions"
 mkdir -p "$STATE_DIR" "$LOG_DIR"
-. "$ROOT/lib/common.sh"; . "$ROOT/lib/os.sh"; . "$ROOT/lib/checklist.sh"
+. "$ROOT/lib/help.sh"; . "$ROOT/lib/common.sh"; . "$ROOT/lib/os.sh"; . "$ROOT/lib/checklist.sh"
 for f in "$ROOT"/steps/*.sh; do . "$f"; done
 
 echo "== distribution detection"
@@ -138,6 +138,66 @@ check "confirm 1 = yes"          bash -c '. "$0/lib/common.sh"; printf "1\n" | c
 check "confirm 2 = no"           bash -c '. "$0/lib/common.sh"; ! printf "2\n" | confirm "Q?" y' "$ROOT"
 check "confirm enter = default y" bash -c '. "$0/lib/common.sh"; printf "\n" | confirm "Q?" y' "$ROOT"
 check "confirm survives bad input" bash -c '. "$0/lib/common.sh"; printf "x\n7\n1\n" | confirm "Q?" n' "$ROOT"
+
+echo "== help and one step back (every question offers both)"
+# outside a step _prompt_back returns PROMPT_RC_BACK; inside one it leaves the step (exit 10)
+_t_rc() { local rc=0; "$@" >/dev/null 2>&1 || rc=$?; [ "$rc" = "10" ]; }
+check "confirm: b = back"        _t_rc bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; printf "b\n" | confirm "Q?" n' "$ROOT"
+check "ask: b = back"            _t_rc bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; printf "b\n" | ask v "Q" d' "$ROOT"
+check "ask_secret: b = back"     _t_rc bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; printf "b\n" | ask_secret v "Q"' "$ROOT"
+check "pick_option: b = back"    _t_rc bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; . "$0/lib/checklist.sh"; printf "b\n" | pick_option v "Q" a "a=A;b=B"' "$ROOT"
+check "choose: b = back"         _t_rc bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; printf "b\n" | choose "Q" one two' "$ROOT"
+# help does not answer the question: h prints the text and asks again
+out="$(printf 'h\n2\n' | bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; confirm "Q?" y; echo "rc=$?"' "$ROOT" | tail -1)"
+check "confirm: h asks again"    [ "$out" = "rc=1" ]
+out="$(printf 'h\nwert\n' | bash -c '. "$0/lib/help.sh"; . "$0/lib/common.sh"; ask v "Q"; echo "$v"' "$ROOT" | tail -1)"
+check "ask: h asks again"        [ "$out" = "wert" ]
+check "help_show names the log"  bash -c '. "$0/lib/help.sh"; LOG_FILE=/x/y.log help_show LANGUAGE Q | grep -q "/x/y.log"' "$ROOT"
+check "help_show without a key"  bash -c '. "$0/lib/help.sh"; help_show "" "Frage" | grep -q "no written explanation"' "$ROOT"
+# the drift guard: every help key a prompt names must have a text. A key that is only
+# mistyped would silently fall back to the general text and nobody would notice.
+_t_help_keys() {
+    local key missing=""
+    while read -r key; do
+        [[ -n "$key" ]] || continue
+        [[ -n "${HELP_TEXTS[$key]:-}" ]] || missing="$missing $key"
+    done < <(grep -rhoE '\b(confirm|ask|ask_secret|pick_option|help_show)\b[^|&;]*\b(step[0-9]{2}\.[a-z]+|menu)\b' \
+                 "$ROOT/install.sh" "$ROOT/steps" 2>/dev/null \
+             | grep -oE '(step[0-9]{2}\.[a-z]+|\bmenu\b)' | sort -u)
+    [[ -z "$missing" ]] || { echo "help keys without a text:$missing"; return 1; }
+}
+check "every help key has a text" _t_help_keys
+# and every checklist item, whose key IS its help key
+_t_help_items() {
+    local item k rest missing=""
+    for item in "${CHECKLIST_ITEMS[@]}"; do
+        IFS='|' read -r k rest <<< "$item"
+        [[ -n "${HELP_TEXTS[$k]:-}" ]] || missing="$missing $k"
+    done
+    [[ -z "$missing" ]] || { echo "checklist items without help:$missing"; return 1; }
+}
+check "every checklist item has help" _t_help_items
+
+echo "== third-party apt repositories follow the release cycle late"
+# apt_repo_dist must never propose a codename NEWER than this host's, and must fall back to
+# the newest older one the repository actually carries (the trixie/CrowdSec case, 2026-09-23).
+_t_repo() {
+    local carries="$1" expect="$2" got
+    curl() { case "$*" in *"/dists/${carries}/Release"*) return 0 ;; *) return 22 ;; esac; }
+    got="$(apt_repo_dist https://example.invalid/repo 2>/dev/null)" || got="<none>"
+    unset -f curl
+    [ "$got" = "$expect" ]
+}
+detect debian 13 trixie '' >/dev/null
+check "trixie, repo has trixie"   _t_repo trixie trixie
+check "trixie, repo only bookworm" _t_repo bookworm bookworm
+check "trixie, repo only bullseye" _t_repo bullseye bullseye
+check "trixie, repo has nothing"  _t_repo nothing '<none>'
+detect debian 12 bookworm '' >/dev/null
+_t_repo_no_newer() { _t_repo trixie '<none>'; }
+check "bookworm never takes trixie" _t_repo_no_newer
+detect ubuntu 24.04 noble debian >/dev/null
+check "noble falls back to jammy"  _t_repo jammy jammy
 
 echo "== config editing"
 printf '# PermitRootLogin prohibit-password\nPasswordAuthentication yes\nSubsystem sftp /usr/lib/openssh/sftp-server\n' > "$TMP/sshd"

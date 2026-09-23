@@ -20,22 +20,22 @@ step_30_run() {
     checklist_require ADMIN_USER KEY_SOURCE
     [[ "$KEY_SOURCE" == "paste" ]] && _require_pasted_key
     _personal_user "$ADMIN_USER" "$KEY_SOURCE" "${ADMIN_SSH_PUBKEY:--}" y
-    while confirm "Add another personal admin?" n; do
+    while confirm "Add another personal admin?" n step30.another; do
         local name source pubkey="-"
         while true; do
-            ask name "Linux user name"
+            ask name "Linux user name" "" ADMIN_USER
             is_personal_user "$name" && break
             echo "  '$name' is not allowed (reserved: $BOOTSTRAP_USER, root)."
         done
-        pick_option source "SSH access of $name" later "later=Password now, SSH later in the Toolserver;paste=I have a public key;generate=Generate a key pair on this server"
+        pick_option source "SSH access of $name" later "later=Password now, SSH later in the Toolserver;paste=I have a public key;generate=Generate a key pair on this server" KEY_SOURCE
         if [[ "$source" == "paste" ]]; then
             while true; do
-                ask pubkey "Public SSH key of $name (one line, or a path to a .pub file)"
+                ask pubkey "Public SSH key of $name (one line, or a path to a .pub file)" "" ADMIN_SSH_PUBKEY
                 is_pubkey "$pubkey" && break
                 echo "  That is not a public key."
             done
         fi
-        local sudo_flag=n; confirm "Give $name sudo?" y && sudo_flag=y
+        local sudo_flag=n; confirm "Give $name sudo?" y step30.sudo && sudo_flag=y
         _personal_user "$name" "$source" "$pubkey" "$sudo_flag"
     done
     _sftp_subsystem
@@ -48,7 +48,7 @@ step_30_run() {
     echo
     log_warn "Next: root login off, password login off, key only -- for everyone, including $BOOTSTRAP_USER."
     log_warn "Before you say yes: open a SECOND terminal and log in as a personal admin with the key."
-    if ! confirm "Did a key login of a personal admin work in a second session?" n; then
+    if ! confirm "Did a key login of a personal admin work in a second session?" n step30.keylogin; then
         log_warn "Hardening skipped -- run this step again once the key login is proven."
         step_done 30
         return 0
@@ -61,7 +61,7 @@ step_30_run() {
 
 _require_pasted_key() {
     while ! is_pubkey "${ADMIN_SSH_PUBKEY:-}"; do
-        ask ADMIN_SSH_PUBKEY "Public SSH key of $ADMIN_USER (one line, or a path to a .pub file)"
+        ask ADMIN_SSH_PUBKEY "Public SSH key of $ADMIN_USER (one line, or a path to a .pub file)" "" ADMIN_SSH_PUBKEY
         is_pubkey "$ADMIN_SSH_PUBKEY" || echo "  That is not a public key."
     done
     export ADMIN_SSH_PUBKEY; checklist_save_key ADMIN_SSH_PUBKEY "$ADMIN_SSH_PUBKEY"
@@ -83,8 +83,8 @@ _personal_user() {
     else
         run useradd -m -s /bin/bash "$user"
         log_ok "User $user created."
-        if [[ "$source" == "later" ]] || confirm "Set a password for $user (sudo asks for it; login itself is by key)?" y; then
-            local pw; ask_secret pw "Password for $user"
+        if [[ "$source" == "later" ]] || confirm "Set a password for $user (sudo asks for it; login itself is by key)?" y step30.password; then
+            local pw; ask_secret pw "Password for $user" step30.password
             printf '%s:%s\n' "$user" "$pw" | chpasswd; unset pw
         fi
     fi
@@ -149,7 +149,7 @@ _remove_handed_out_keys() {
     [[ -d "$dir" ]] || return 0
     for f in "$dir"/*; do
         [[ -f "$f" && "$f" != *.pub ]] || continue
-        if confirm "Delete the server copy of the private key $(basename "$f") (you have it on the workstation)?" y; then
+        if confirm "Delete the server copy of the private key $(basename "$f") (you have it on the workstation)?" y step30.delkey; then
             shred -u "$f" 2>/dev/null || rm -f "$f"
             log_ok "Private key $(basename "$f") removed from the server."
         else

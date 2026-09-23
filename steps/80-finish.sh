@@ -78,13 +78,15 @@ step_80_run() {
     fi
 
     log_warn "Removing $user with its home directory. Its sessions end now."
-    if ! confirm "Remove bootstrap user $user now?" n; then
+    if ! confirm "Remove bootstrap user $user now?" n step80.remove; then
         log_info "$user stays. Step 8 remains open -- run it again when ready."
         return 0
     fi
     pkill -KILL -u "$user" 2>/dev/null || true
     run userdel -r "$user"
     rm -f "/etc/sudoers.d/$user"
+    # the password step 1 may have put into a file goes with the user it belonged to
+    rm -f "$STATE_DIR/bootstrap-password.txt"
     step_done 80
     log_ok "Bootstrap user removed. The Toolserver runs the host from here."
 }

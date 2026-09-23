@@ -75,21 +75,26 @@ _item_valid() {
 # pick_option VAR "Prompt" DEFAULT "options" -> numbered choice, Enter takes the default
 pick_option() {
     local -n _target="$1"
-    local prompt="$2" default="$3" options="$4" i reply dflt=0
+    local prompt="$2" default="$3" options="$4" helpkey="${5:-}" i reply dflt=0
     IFS=';' read -ra _opts <<< "$options"
     echo "$prompt"
     for i in "${!_opts[@]}"; do
         printf '  %2d) %s\n' "$((i + 1))" "${_opts[$i]#*=}"
         [[ "${_opts[$i]%%=*}" == "$default" ]] && dflt=$((i + 1))
     done
+    _prompt_extras
     while true; do
         if (( dflt > 0 )); then read -r -p "Choice [$dflt]: " reply; reply="${reply:-$dflt}"
         else read -r -p "Choice: " reply; fi
+        case "$reply" in
+            h|H|\?) help_show "$helpkey" "$prompt"; continue ;;
+            b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
+        esac
         if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= ${#_opts[@]} )); then
             _target="${_opts[$((reply - 1))]%%=*}"
             return 0
         fi
-        echo "  Enter a number between 1 and ${#_opts[@]}."
+        echo "  Enter a number between 1 and ${#_opts[@]}, h or b."
     done
 }
 
@@ -122,14 +127,19 @@ _checklist_default() {
     echo "$raw"
 }
 
-# _checklist_ask KEY PROMPT DEFAULT VALIDATOR OPTIONS CURRENT -> asks, validates, saves
+# _checklist_ask KEY PROMPT DEFAULT VALIDATOR OPTIONS CURRENT -> asks, validates, saves.
+# Returns PROMPT_RC_BACK when the answer was "one step back" -- nothing is saved then, and the
+# caller decides what "back" means in its context (the review walks to the previous item).
+# The item's KEY is its help key, so every checklist question explains itself for free.
 _checklist_ask() {
-    local key="$1" prompt="$2" default="$3" validator="$4" options="$5" current="$6" value
+    local key="$1" prompt="$2" default="$3" validator="$4" options="$5" current="$6" value rc
     default="$(_checklist_default "$default")"
     [[ -n "$current" ]] && default="$current"
     while true; do
-        if [[ -n "$options" ]]; then pick_option value "$prompt" "$default" "$options"
-        else ask value "$prompt" "$default"; fi
+        rc=0
+        if [[ -n "$options" ]]; then pick_option value "$prompt" "$default" "$options" "$key" || rc=$?
+        else ask value "$prompt" "$default" "$key" || rc=$?; fi
+        (( rc == PROMPT_RC_BACK )) && return "$PROMPT_RC_BACK"
         _item_valid "$key" "$value" && break
         echo "  '$value' is not a valid value for $key."
     done
@@ -166,12 +176,27 @@ checklist_require() {
 }
 
 # checklist_review: walk through every item, show the current value, allow changes.
+# "One step back" here means the PREVIOUS question, not "out of the checklist": this is the
+# long chain of questions where a typo used to cost the whole walk. At the first item there is
+# nothing before it, so back leaves the checklist; everything answered until then is saved --
+# each answer is written the moment it is given, not at the end.
 checklist_review() {
-    local item key prompt default validator options
+    local item key prompt default validator options i=0 rc
     heading "Preparation checklist ($SITE_ENV)"
-    for item in "${CHECKLIST_ITEMS[@]}"; do
-        IFS='|' read -r key prompt default validator options <<< "$item"
-        _checklist_ask "$key" "$prompt" "$default" "$validator" "$options" "${!key:-}"
+    while (( i < ${#CHECKLIST_ITEMS[@]} )); do
+        IFS='|' read -r key prompt default validator options <<< "${CHECKLIST_ITEMS[$i]}"
+        rc=0
+        _checklist_ask "$key" "$prompt" "$default" "$validator" "$options" "${!key:-}" || rc=$?
+        if (( rc == PROMPT_RC_BACK )); then
+            if (( i == 0 )); then
+                log_info "Checklist left at the first question. Everything answered before is saved."
+                return 0
+            fi
+            i=$((i - 1))
+            continue
+        fi
+        (( rc == 0 )) || return "$rc"
+        i=$((i + 1))
     done
     checklist_derive
     log_ok "Checklist saved to $SITE_ENV (mode 600)."
