@@ -485,38 +485,6 @@ ON CONFLICT (id) DO NOTHING;
 SQL
     log "Tenants 'default' (${DOMAIN}) and 'system' present"
 
-    # 7b2. The two foreign keys a table has on ITSELF -- deferred to COMMIT.
-    #      pg_dump orders tables by foreign key, but never rows, and warns about
-    #      exactly these two ("circular foreign-key constraints on this table").
-    #      In menu_nodes 35 submenus sit ahead of their parent menu, so loading
-    #      the seed stops there. The seed loads in ONE transaction below, so a
-    #      deferred check sees all 325 rows and passes.
-    #      Since v1732 the dumped structure already carries this, and then these
-    #      two statements change nothing. They are here for the host whose
-    #      structure came from an older dump -- 7a skips the structure once the
-    #      tables exist, so that host would never receive it otherwise. That is
-    #      not a corner case: it is every machine whose first run aborted.
-    _psql <<'SQL'
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_constraint
-                WHERE conname = 'menu_nodes_parent_node_id_fkey'
-                  AND conrelid = 'public.menu_nodes'::regclass) THEN
-        ALTER TABLE public.menu_nodes
-            ALTER CONSTRAINT menu_nodes_parent_node_id_fkey
-            DEFERRABLE INITIALLY DEFERRED;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_constraint
-                WHERE conname = 'projects_predecessor_fkey'
-                  AND conrelid = 'governance.projects'::regclass) THEN
-        ALTER TABLE governance.projects
-            ALTER CONSTRAINT projects_predecessor_fkey
-            DEFERRABLE INITIALLY DEFERRED;
-    END IF;
-END $$;
-SQL
-    log "Self-referencing keys deferred to COMMIT (menu tree, project predecessor)"
-
     # 7c. Seed -- once, decided by the version marker, not by the table count.
     SEED_ROWS=$(_psql_q "SELECT COUNT(*) FROM public.schema_version")
     if [ "${SEED_ROWS:-0}" -gt 0 ]; then
