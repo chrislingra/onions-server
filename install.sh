@@ -54,7 +54,7 @@ instance_open() {
         echo "Domain this server serves"
         echo "  (lower case, with at least one dot, e.g. example.org)"
         while true; do
-            read -r -p "Value: " domain
+            read -r -p "${PROMPT_INDENT}Domain: " domain
             domain="${domain//[[:space:]]/}"
             [[ -z "$domain" ]] && { echo "  A value is required."; continue; }
             is_domain "$domain" && break
@@ -145,7 +145,7 @@ main_menu() {
         echo "   h) Help -- what the steps do and in which order"
         echo "   q) Quit"
         echo
-        read -r -p "Choice: " reply
+        read -r -p "${PROMPT_INDENT}Choice: " reply
         case "$reply" in
             0) checklist_review; pause ;;
             [1-8]) run_step "$((reply * 10))" || true; pause ;;

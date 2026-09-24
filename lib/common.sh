@@ -68,6 +68,17 @@ _prompt_extras() {
     printf '  %2s) %s\n' "b" "One step back"
 }
 
+# The input line starts in the same column as the answers above it ("   h)"), and it names
+# what is typed instead of a bare "Value:" (operator 2026-09-24: "statt value: haette ich
+# gerne den benannten Wert nach dem gefragt wird. zB email: und das buendig unter der Auswahl
+# help oder zurueck"). The name is the question without its explaining parenthesis.
+PROMPT_INDENT="   "
+_prompt_label() {
+    local text="$1"
+    [[ "$text" =~ ^(.*[^[:space:]])[[:space:]]\(.+\)$ ]] && text="${BASH_REMATCH[1]}"
+    printf '%s' "${text%\?}"
+}
+
 # _prompt_headline "Question (long aside)" -> the question on one line, a long aside
 # indented on the next. Many questions here end in a parenthesis that explains the value;
 # left in the same line it is what turns a readable question into a wrapped block. A short
@@ -92,7 +103,7 @@ confirm() {
     printf '  %2d) %s\n' 2 "No"
     _prompt_extras
     while true; do
-        read -r -p "Choice [$dflt]: " reply
+        read -r -p "${PROMPT_INDENT}Choice [$dflt]: " reply
         reply="${reply:-$dflt}"
         case "$reply" in
             1|y|Y|j|J) return 0 ;;
@@ -124,8 +135,8 @@ ask() {
             _prompt_extras
             show=0
         fi
-        if [[ -n "$default" ]]; then read -r -p "Value [Enter = default]: " reply
-        else                          read -r -p "Value: " reply; fi
+        if [[ -n "$default" ]]; then read -r -p "${PROMPT_INDENT}$(_prompt_label "$prompt") [Enter = default]: " reply
+        else                          read -r -p "${PROMPT_INDENT}$(_prompt_label "$prompt"): " reply; fi
         case "$reply" in
             h|H|\?) help_show "$helpkey" "$prompt"; show=1; continue ;;
             b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
@@ -150,15 +161,16 @@ ask_secret() {
         if (( show )); then
             _prompt_headline "$prompt"
             _prompt_extras
+            echo "${PROMPT_INDENT}(hidden: nothing appears as you type)"
             show=0
         fi
-        read -r -s -p "Value (hidden, nothing appears as you type): " first; echo
+        read -r -s -p "${PROMPT_INDENT}$(_prompt_label "$prompt"): " first; echo
         case "$first" in
             h|H|\?) help_show "$helpkey" "$prompt"; show=1; continue ;;
             b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
         esac
         [[ -n "$first" ]] || { echo "  A value is required."; continue; }
-        read -r -s -p "Repeat: " second; echo
+        read -r -s -p "${PROMPT_INDENT}Repeat: " second; echo
         [[ "$first" == "$second" ]] && break
         echo "  The two entries differ, try again."
     done
@@ -177,7 +189,7 @@ choose() {
     printf '   0) Cancel\n' >&2
     _prompt_extras >&2
     while true; do
-        read -r -p "$prompt [0-${#items[@]}]: " reply
+        read -r -p "${PROMPT_INDENT}$prompt [0-${#items[@]}]: " reply
         case "$reply" in
             h|H|\?) help_show "" "$prompt" >&2; continue ;;
             b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;

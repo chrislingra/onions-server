@@ -94,8 +94,8 @@ pick_option() {
     done
     _prompt_extras
     while true; do
-        if (( dflt > 0 )); then read -r -p "Choice [$dflt]: " reply; reply="${reply:-$dflt}"
-        else read -r -p "Choice: " reply; fi
+        if (( dflt > 0 )); then read -r -p "${PROMPT_INDENT}Choice [$dflt]: " reply; reply="${reply:-$dflt}"
+        else read -r -p "${PROMPT_INDENT}Choice: " reply; fi
         case "$reply" in
             h|H|\?) help_show "$helpkey" "$prompt"; continue ;;
             b|B)    _prompt_back "$prompt"; return "$PROMPT_RC_BACK" ;;
