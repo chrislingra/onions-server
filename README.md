@@ -71,10 +71,12 @@ Without a reachable Toolserver -- the very first host of an installation -- the 
 by hand:
 
 ```bash
-apt-get install -y git            # dnf install git / zypper install git
-git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
-cd /opt/onions-server && sudo bash install.sh
+apt-get install -y git && { git -C /opt/onions-server pull --ff-only 2>/dev/null || git clone https://github.com/chrislingra/onions-server.git /opt/onions-server; } && cd /opt/onions-server && bash install.sh
 ```
+
+One line for the first start and every restart alike: an existing checkout is brought to the
+current state, a missing one is cloned -- the line never stops at "already exists". On
+RHEL/Fedora read `dnf install -y git`, on SUSE `zypper install -y git`.
 
 Menu item `a` runs steps 1-8 in order; every step can also be run alone and repeated.
 

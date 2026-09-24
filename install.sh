@@ -2,7 +2,8 @@
 # install.sh -- onions-server: the menu-driven base installation of a fresh Linux host,
 # from the empty machine up to the point where the Toolserver takes over.
 #
-#   git clone git@github.com:chrislingra/onions-server.git /opt/onions-server
+#   git -C /opt/onions-server pull --ff-only 2>/dev/null \
+#       || git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
 #   cd /opt/onions-server && sudo bash install.sh
 #
 # Two places, kept apart on purpose:
@@ -45,13 +46,19 @@ instance_open() {
         echo
         echo "This host has no instance yet. The domain names it: everything of this host"
         echo "goes to /opt/<domain> (answers, state, logs); the code stays in $INSTALL_ROOT."
+        # The one question without h and b: there is no step before it to go back to, and
+        # listing two answers that do nothing here only confuses (operator 2026-09-24:
+        # "an der stelle nicht durch die zurueck oder Hilfeoption verwirren"). What the value
+        # has to look like is said in the question itself instead of behind h.
+        echo
+        echo "Domain this server serves"
+        echo "  (lower case, with at least one dot, e.g. example.org)"
         while true; do
-            # no "back" behind this one: without a domain there is no instance and nothing to
-            # go back to -- the installer would have nowhere to put its answers.
-            ask domain "Domain this server serves (e.g. example.org)" "" domain \
-                || { echo "  The domain is the one question that has no step before it."; continue; }
+            read -r -p "Value: " domain
+            domain="${domain//[[:space:]]/}"
+            [[ -z "$domain" ]] && { echo "  A value is required."; continue; }
             is_domain "$domain" && break
-            echo "  '$domain' is not a valid domain."
+            echo "  '$domain' is not a valid domain: lower case letters, digits, dashes, at least one dot."
         done
         printf '%s\n' "$domain" > "$INSTANCE_FILE"
     fi
