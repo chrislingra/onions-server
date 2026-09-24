@@ -82,12 +82,15 @@ Menu item `a` runs steps 1-8 in order; every step can also be run alone and repe
 
 **Access to the Toolserver's source (step 7).** This installer is a product path for an
 unknown user (open core: the Toolserver's base is published under AGPL-3.0-only from
-release level 1). From then on `TOOLSERVER_GIT` is a public address and step 7 clones it
-without credentials -- no deploy key, no token, no password, nothing registered anywhere.
-Until that release the base is closed and only lingra installs: the operator registers this
-host's own key (`/root/.ssh/id_ed25519.pub`) as a read-only deploy key of the private
-repository and enters its ssh address. Step 7 has no key handling of its own -- it probes
-the address the way git will use it, never prompts, and shows git's reason if it fails.
+release level 1). The source is fixed (`TOOLSERVER_SOURCE` in `install.sh`, always its
+current state) and never asked. From release level 1 on it is a public address and step 7
+clones it without credentials -- no deploy key, no token, no password.
+
+**Until then nobody but lingra can install the Toolserver**, and the installer says so at
+start, before step 1: steps 1-6 run, step 7 stops. A lingra host gets past it only with its
+own key (`/root/.ssh/id_ed25519.pub`) registered as a read-only deploy key of the private
+repository. Step 7 has no key handling of its own -- it probes the source the way git will
+use it, never prompts, and shows git's reason if it fails.
 
 | Step | Does |
 |---|---|
@@ -97,7 +100,7 @@ the address the way git will use it, never prompts, and shows git's reason if it
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver | probes `TOOLSERVER_GIT` without prompting, clones it, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik` (first-login password generated, printed once), handover |
+| 7 Toolserver | probes `TOOLSERVER_SOURCE` without prompting, clones it, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik` (first-login password generated, printed once), handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout

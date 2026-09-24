@@ -102,14 +102,6 @@ server-to-server and blocked on most networks."
 not asked here: it is asked in step 6 at the moment the relay is written, and it goes straight
 into /etc/msmtprc (root only, mode 600). It is never stored in the checklist."
 
-[TOOLSERVER_GIT]="Where the Toolserver itself is cloned from in step 7. A public https address
-needs nothing -- no token, no key. A private repository needs an ssh address (git@github.com:
-...) and this host's key registered there as a deploy key; step 7 tells you the key to
-register when that is the case."
-
-[TOOLSERVER_REF]="The branch or tag of the Toolserver to install. master is the current state.
-Name a tag instead when you want a fixed, known version that does not move under you."
-
 [step10.password]="The first password of the bootstrap user. It expires immediately -- the
 first login has to change it -- but it has to reach you in the first place.
   I type it myself: you choose it, so there is nothing to copy off the screen. This is the

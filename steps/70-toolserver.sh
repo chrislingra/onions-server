@@ -12,7 +12,7 @@
 #
 # Access (operator 2026-09-19, open-core decisions D-OPENCORE-01/05/08/12): this installer
 # is a product path for an unknown user. The Toolserver's open base is published under
-# AGPL-3.0-only from release level 1, so TOOLSERVER_GIT is then a public address and the
+# AGPL-3.0-only from release level 1, so TOOLSERVER_SOURCE is then a public address and the
 # clone needs no credentials -- no deploy key, no token, no password, nothing registered
 # anywhere. Until that release the base is closed and only lingra installs: for such a
 # host the operator registers the host's own SSH key (/root/.ssh/id_ed25519.pub) as a
@@ -26,7 +26,6 @@ STEP_70_TITLE="Toolserver (pull from Git, run its setup, hand over)"
 
 step_70_run() {
     heading "$STEP_70_TITLE"
-    checklist_require TOOLSERVER_GIT TOOLSERVER_REF
     docker_ok || die "Docker is missing -- run the Docker step first."
     docker ps --format '{{.Names}}' | grep -qx traefik || die "Traefik is not running -- run the Traefik step first."
     command -v git >/dev/null || pkg_install git
@@ -35,13 +34,13 @@ step_70_run() {
     mkdir -p "$INSTALL_ROOT/src"
     _git_readable || return 1
     if [[ -d "$src/.git" ]]; then
-        log_info "Updating $src to $TOOLSERVER_REF..."
-        (cd "$src" && run git fetch --tags origin && run git checkout -q "$TOOLSERVER_REF" && (git symbolic-ref -q HEAD >/dev/null && run git pull -q --ff-only || true))
+        log_info "Updating $src to the current state..."
+        (cd "$src" && run git fetch --tags origin && run git pull -q --ff-only)
     else
-        log_info "Cloning $TOOLSERVER_GIT ($TOOLSERVER_REF) to $src..."
-        run git clone --branch "$TOOLSERVER_REF" "$TOOLSERVER_GIT" "$src"
+        log_info "Cloning $TOOLSERVER_SOURCE to $src..."
+        run git clone "$TOOLSERVER_SOURCE" "$src"
     fi
-    log_ok "Toolserver source at $(cd "$src" && git describe --tags --always) ($TOOLSERVER_REF)."
+    log_ok "Toolserver source at $(cd "$src" && git describe --tags --always)."
 
     local setup="$INSTANCE_DIR/setup-toolserver.sh"
     [[ -f "$INSTALL_ROOT/toolserver/setup-toolserver.sh" ]] || die "toolserver/setup-toolserver.sh is missing in $INSTALL_ROOT."
@@ -56,31 +55,58 @@ step_70_run() {
     log_info "  Environment > Server-Config > Services"
 }
 
-# _git_readable -- can this host read TOOLSERVER_GIT the way git will use it, without
-# asking anything? GIT_TERMINAL_PROMPT=0 makes an https address that wants a login fail at
-# once instead of prompting for a user name; BatchMode does the same for ssh; the host key
-# of the Git server is accepted on first contact. Both settings stay exported, so the clone
-# and every later pull behave the same way. Git's own reason is always shown.
-_git_readable() {
-    local err
+# _git_probe -- can this host read TOOLSERVER_SOURCE the way git will use it, without asking
+# anything? GIT_TERMINAL_PROMPT=0 makes an https address that wants a login fail at once
+# instead of prompting for a user name; BatchMode does the same for ssh; the host key of the
+# Git server is accepted on first contact. Both settings stay exported, so the clone and
+# every later pull behave the same way. Prints git's own error on failure, nothing else.
+_git_probe() {
     export GIT_TERMINAL_PROMPT=0
     export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
-    if err="$(git ls-remote --exit-code -h "$TOOLSERVER_GIT" 2>&1 >/dev/null)"; then
-        log_ok "Git access to $TOOLSERVER_GIT works."
+    git ls-remote --exit-code -h "$TOOLSERVER_SOURCE" 2>&1 >/dev/null
+}
+
+# toolserver_not_published -- the plain statement, said before step 1 AND when step 7 stops
+# (operator 2026-09-24: "es muss offensichtlich sein, dass das nicht geht"). Until release
+# level 1 (D-OPENCORE-08) the Toolserver's source is closed: nobody but lingra can install it,
+# and this installer must say so up front instead of letting six steps run first.
+toolserver_not_published() {
+    log_warn "The Toolserver cannot be installed on this host: its source is not published yet."
+    log_warn "  It becomes public with release level 1. Until then steps 1-6 run, step 7 stops."
+    log_info "  Only a lingra host gets past step 7 now: this host's key registered as a read-only"
+    log_info "  deploy key of $TOOLSERVER_SOURCE."
+    if [[ -f /root/.ssh/id_ed25519.pub ]]; then
+        log_info "  This host's key:"; cat /root/.ssh/id_ed25519.pub
+    else
+        log_info "  This host has no key yet: ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519"
+    fi
+}
+
+# toolserver_precheck -- at start, before step 1: says it only when access is refused. No git
+# yet, or no network, is not a verdict about publication; step 7 names those itself.
+toolserver_precheck() {
+    local err
+    command -v git >/dev/null || return 0
+    err="$(_git_probe)" && return 0
+    case "$err" in
+        *"could not read Username"*|*"Authentication failed"*|*"Permission denied"*|*"Repository not found"*|*"not found"*|*"does not appear to be a git repository"*)
+            echo; toolserver_not_published ;;
+    esac
+    return 0
+}
+
+# _git_readable -- the probe with its explanation, for step 7.
+_git_readable() {
+    local err
+    if err="$(_git_probe)"; then
+        log_ok "Git access to $TOOLSERVER_SOURCE works."
         return 0
     fi
-    log_err "This host cannot read $TOOLSERVER_GIT. Git says:"
+    log_err "This host cannot read $TOOLSERVER_SOURCE. Git says:"
     printf '%s\n' "$err" | grep -v '^$' | tail -n 4 | sed 's/^/    /' | tee -a "$LOG_FILE"
     case "$err" in
         *"could not read Username"*|*"Authentication failed"*|*"Permission denied"*|*"Repository not found"*|*"not found"*|*"does not appear to be a git repository"*)
-            log_info "The address must be readable without credentials: a published repository over https needs nothing."
-            log_info "A private repository (lingra's closed phase): register this host's key as a read-only deploy key there and enter its ssh address."
-            if [[ -f /root/.ssh/id_ed25519.pub ]]; then
-                log_info "This host's key:"; cat /root/.ssh/id_ed25519.pub
-            else
-                log_info "This host has no key yet: ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519"
-            fi
-            log_info "Then run this step again." ;;
+            toolserver_not_published ;;
         *)  log_warn "That is not an access problem -- check the network first (DNS, https or port 22 to the Git server)." ;;
     esac
     return 1

@@ -208,11 +208,14 @@ check "choose prints only the answer" [ "$out" = "1" ]
 # step 7 probes the Toolserver address without any key handling of its own and without
 # ever prompting; both cases run against local repositories, no network needed
 git init -q "$TMP/readable" && git -C "$TMP/readable" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
-_t_git_ok()  { TOOLSERVER_GIT="$TMP/readable" _git_readable; }
-_t_git_bad() { ! TOOLSERVER_GIT="$TMP/nowhere" _git_readable < /dev/null; }
+_t_git_ok()  { TOOLSERVER_SOURCE="$TMP/readable" _git_readable; }
+_t_git_bad() { ! TOOLSERVER_SOURCE="$TMP/nowhere" _git_readable < /dev/null; }
 check "step 7 reads a readable address" _t_git_ok
 check "step 7 stops on an unreadable address" _t_git_bad
-check "step 7 never prompts" [ "$(TOOLSERVER_GIT="$TMP/nowhere" _git_readable >/dev/null 2>&1; echo "$GIT_TERMINAL_PROMPT")" = "0" ]
+check "step 7 never prompts" [ "$(TOOLSERVER_SOURCE="$TMP/nowhere" _git_readable >/dev/null 2>&1; echo "$GIT_TERMINAL_PROMPT")" = "0" ]
+# the source is fixed, never asked (operator 2026-09-24)
+_t_source_fixed() { ! grep -qE '^[[:space:]]*"TOOLSERVER_' "$ROOT/lib/checklist.sh" && grep -q '^TOOLSERVER_SOURCE=' "$ROOT/install.sh"; }
+check "Toolserver source is not a question" _t_source_fixed
 _t_no_keys() { ! grep -qE '^[[:space:]]*(run[[:space:]]+)?ssh-keygen|api.github.com|ask_secret|IdentitiesOnly' "$ROOT/steps/70-toolserver.sh"; }
 check "step 7 carries no key apparatus" _t_no_keys
 # ask prints its question block first (structured, one line per answer), so the value is the

@@ -22,6 +22,10 @@ INSTANCE_FILE="$INSTALL_ROOT/.instance"
 # Fixed names of the platform -- the same on every host, so every script can rely on them.
 BOOTSTRAP_USER="manager"   # exists from step 1 on, works in the delivered state, removed by step 8
 PLATFORM_GROUP="onions"    # owns the platform directories; every admin is a member
+# The one source of the Toolserver, always its current state -- not a question (operator
+# 2026-09-24: "es gibt keine anderen optionen"). With release level 1 this becomes the public
+# https address of the published base (GAP-PUB-OEFFENTLICHES-REPOSITORY-01).
+TOOLSERVER_SOURCE="git@github.com:chrislingra/onions-toolserver.git"
 
 # shellcheck source=lib/help.sh
 . "$INSTALL_ROOT/lib/help.sh"
@@ -199,6 +203,8 @@ main() {
     # empfehlung keine pause kommt, sieht das niemand"). The banner carries a one-line
     # version of the same verdict afterwards, so it stays visible.
     os_support_report
+    # Whether step 7 can work at all is known before step 1 -- say it now, not after six steps.
+    step_is_done 70 || toolserver_precheck
     echo
     pause
     # A run that broke off goes on by itself at the break-off point, the menu comes afterwards.
