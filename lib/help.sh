@@ -27,7 +27,10 @@ again repairs rather than breaks, so a step you are unsure about can simply be r
   6  Hardening   mail relay, CrowdSec, automatic security updates
   7  Toolserver  the platform itself, from its repository
   8  Finish      checks that you can get in without the bootstrap user, then removes it
-'All steps' walks them in order and stops at the first one that does not finish. The state
+'a' (or Enter) continues: it skips every finished step, runs the open ones in order and stops
+at the first one that does not finish. After a break-off -- wherever it happened -- the next
+start continues there by itself; answers already given are not asked again, only passwords.
+A number 1-8 runs that one step, also a finished one, on purpose. The state
 lives in /opt/<domain>, the log of this run in the path named at the bottom of every help
 text -- a step that went wrong can always be read up there afterwards."
 

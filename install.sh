@@ -119,15 +119,31 @@ run_step() {
     (( rc == 0 )) || { log_err "Step $((n / 10)) failed -- see $LOG_FILE"; return 1; }
 }
 
+# first_open_step -> the number of the first step without a done marker, nothing when all are done.
+first_open_step() {
+    local n
+    for n in "${STEPS[@]}"; do step_is_done "$n" || { echo "$n"; return 0; }; done
+    return 1
+}
+
+# run_all continues where the last run stopped, wherever that was (operator 2026-09-24: "ich
+# moechte, dass setup an der Abbruchstelle fortsetzt (egal wo abgebrochen wird)"). A finished
+# step is skipped, not repeated; the step that broke off starts again, and inside it every
+# answer already given is read from site.env instead of asked again. Only passwords are asked
+# anew -- they are never stored. Repeating a finished step on purpose is its own menu number.
 run_all() {
     local n rc
     for n in "${STEPS[@]}"; do
+        if step_is_done "$n"; then
+            log_info "Step $((n / 10)) done $(step_done_at "$n") -- skipped."
+            continue
+        fi
         rc=0; run_step "$n" || rc=$?
         (( rc == 0 )) && continue
         if (( rc == PROMPT_RC_BACK )); then
-            log_info "Stopped at step $((n / 10)) on request. 'All steps' takes it up again -- finished steps repeat harmlessly."
+            log_info "Stopped at step $((n / 10)) on request. The next start continues here."
         else
-            log_err "Stopped at step $((n / 10)). Fix the cause and run 'All steps' again -- finished steps repeat harmlessly."
+            log_err "Stopped at step $((n / 10)). Fix the cause; the next start continues here."
         fi
         return 1
     done
@@ -135,17 +151,23 @@ run_all() {
 }
 
 main_menu() {
-    local reply n
+    local reply n open
     while true; do
         banner
         echo "   0) Preparation checklist (review or change every answer)"
         for n in "${STEPS[@]}"; do status_line "$n"; done
-        echo "   a) All steps in order (1-8)"
+        if open="$(first_open_step)"; then
+            echo "   a) Continue: every open step, from step $((open / 10)) on"
+        else
+            echo "   a) All steps are done"
+        fi
         echo "   v) Show checklist values"
         echo "   h) Help -- what the steps do and in which order"
         echo "   q) Quit"
         echo
-        read -r -p "${PROMPT_INDENT}Choice: " reply
+        # Enter continues -- the one answer that is right after every break-off
+        if [[ -n "$open" ]]; then read -r -p "${PROMPT_INDENT}Choice [a]: " reply; reply="${reply:-a}"
+        else                      read -r -p "${PROMPT_INDENT}Choice: " reply; fi
         case "$reply" in
             0) checklist_review; pause ;;
             [1-8]) run_step "$((reply * 10))" || true; pause ;;
@@ -179,6 +201,16 @@ main() {
     os_support_report
     echo
     pause
+    # A run that broke off goes on by itself at the break-off point, the menu comes afterwards.
+    # "Broke off" = an earlier run left a log here and a step is still open -- also when that
+    # was step 1. Only the very first start of a host begins at the menu.
+    local open earlier
+    earlier="$(find "$LOG_DIR" -maxdepth 1 -name 'install-*.log' ! -path "$LOG_FILE" 2>/dev/null | head -1)"
+    if open="$(first_open_step)" && [[ -n "$earlier" ]]; then
+        log_info "Continuing at step $((open / 10)), where the last run stopped."
+        run_all || true
+        pause
+    fi
     main_menu
 }
 

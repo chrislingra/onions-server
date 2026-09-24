@@ -21,7 +21,7 @@ CHECKLIST_ITEMS=(
     "SENDER_EMAIL|Sender address the server mails from|service@\${DOMAIN}|is_email"
     "SMTP_SERVER|SMTP relay host|smtp.ionos.de|is_nonempty"
     "SMTP_PORT|SMTP relay port (submission)|587|is_number"
-    "SMTP_USER|SMTP relay user name (the password is asked when the relay is set up)||is_nonempty"
+    "SMTP_USER|SMTP relay user name (usually the full e-mail address of the mailbox; the password is asked in step 6)||is_nonempty"
     "TOOLSERVER_GIT|Git URL of the Toolserver (public address: no credentials; private: this host's key as deploy key, ssh address)|git@github.com:chrislingra/onions-toolserver.git|is_nonempty"
     "TOOLSERVER_REF|Toolserver branch or tag to install|master|is_nonempty"
 )
