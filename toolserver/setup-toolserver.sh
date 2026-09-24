@@ -495,7 +495,14 @@ SQL
             exit 1
         fi
         info "Loading the seed from db/schema_seed.sql (one transaction)..."
-        _psql --single-transaction < db/schema_seed.sql
+        # Triggers stay off while the seed loads (session_replication_role = replica, what
+        # pg_restore --disable-triggers does). The seed is a pg_dump --data-only with
+        # search_path '' -- a trigger function naming its tables without schema then fails:
+        # the COPY into public.aip_provider fired aip_provider_endpunkt_durchschreiben(),
+        # whose "UPDATE connectors" found no relation, and the whole seed rolled back
+        # (fresh host lingra.eu, 2026-09-24). The seed is a consistent copy of a running
+        # database; nothing a trigger would derive is missing from it.
+        { echo "SET session_replication_role = replica;"; cat db/schema_seed.sql; } | _psql --single-transaction
         log "Seed applied (schema_version at $(_psql_q 'SELECT MAX(version) FROM public.schema_version'))"
     fi
 
