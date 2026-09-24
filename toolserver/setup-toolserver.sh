@@ -506,6 +506,35 @@ SQL
         log "Seed applied (schema_version at $(_psql_q 'SELECT MAX(version) FROM public.schema_version'))"
     fi
 
+    # 7c2. Every id counter behind the highest id that is there. The seed brings rows WITH
+    #      their ids but not the counters of those tables (it sets 27 of them), so the next
+    #      insert drew id 1, 2, ... again: 7e stopped on "system_config_pkey (id)=(2) already
+    #      exists" (fresh host lingra.eu, 2026-09-24), and every patch that inserts would
+    #      have met the same wall. Each run, idempotent: a counter is set to MAX(id) of its
+    #      column, an empty table keeps its counter.
+    _psql <<'SQL'
+DO $$
+DECLARE r record; m bigint;
+BEGIN
+    FOR r IN
+        SELECT s.oid::regclass AS seq, t.oid::regclass AS tbl, a.attname AS col
+          FROM pg_class s
+          JOIN pg_depend d    ON d.objid = s.oid AND d.classid = 'pg_class'::regclass
+                             AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
+          JOIN pg_class t     ON t.oid = d.refobjid
+          JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE s.relkind = 'S'
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg\_%'
+    LOOP
+        EXECUTE format('SELECT max(%I)::bigint FROM %s', r.col, r.tbl) INTO m;
+        IF m IS NOT NULL THEN PERFORM setval(r.seq, m, true); END IF;
+    END LOOP;
+END $$;
+SQL
+    log "Id counters set behind the highest id of their tables"
+
     # 7d. Rows every patch assumes: the platform's own project (every changelog
     #     entry points at it) and the two languages (every translation does).
     #     No-ops once the seed carries them (scripts/dump_schema.sh, v1504).
