@@ -1,11 +1,11 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v4)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v5)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
 bekommt dadurch keine Macht ueber den Onions-Server -- er kennt nur die
 Tabelle, und dieser Dienst kennt nur eine feste Liste von Vorgaengen.
 
-WAS ER KANN (die feste Liste, Stand v4)
+WAS ER KANN (die feste Liste, Stand v5)
     update   Das Abbild des Dienstes auf den neuen Stand bringen, dann
              "up -d" im Verzeichnis des Dienstes. Ob dabei gezogen oder
              gebaut wird, entscheidet die Compose-Datei selbst:
@@ -37,6 +37,16 @@ WAS ER KANN (die feste Liste, Stand v4)
              Hand einzutippen. Die Aufbauskripte sind darauf geschrieben,
              wiederholt zu laufen; ein zweiter Lauf baut den Dienst neu
              auf, statt einen zweiten daneben zu stellen.
+    module   (v5, 2026-09-25) EINE Erweiterung des Toolservers auf diesen
+             Server holen: setup-module.sh <key> aus diesem Verzeichnis,
+             der Key steht in platform_agent_jobs.target. Bediener: "die
+             Erweiterungen werden selectiv ueber die oberflaeche nach
+             Terminalinstallation geholt" -- das Terminal installiert nur
+             den offenen Kern, Environment > Server-Config > Modules
+             schreibt diesen Auftrag. Nur fuer den Bestandteil der Art
+             toolserver; der Key muss die Form eines Modulschluessels
+             haben, sonst laeuft nichts. Ob das Modul eine Erweiterung ist
+             (und nie lingras eigenes), prueft setup-module.sh selbst.
 
     Fuer backup und setup gilt dasselbe: kein Skript im Katalog, ein
     absoluter Pfad, ein ".." oder eine Datei, die es nicht gibt -- der
@@ -76,6 +86,7 @@ deploy_write byte-gleich gehalten (sha256 vergleichen).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -101,6 +112,10 @@ SICHERUNG_TIMEOUT = 3600
 #: brauchte am 2026-09-21 gemessene 3192 Sekunden. Zwei Stunden sind die Grenze,
 #: ab der ein Lauf nicht mehr laeuft, sondern haengt.
 AUFBAU_TIMEOUT = 7200
+#: Das Skript, das eine Erweiterung holt (Aktion module), und die Form eines
+#: Modulschluessels (platform_modules.key) -- dieselbe, die setup-module.sh prueft.
+MODUL_SKRIPT = "setup-module.sh"
+MODUL_KEY = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 #: Ziehen ist ein Netzzugriff, Bauen ist Arbeit. Deshalb zwei Grenzen.
 ZIEH_TIMEOUT = 900
 BAU_TIMEOUT = 3600
@@ -138,7 +153,7 @@ def psql_write(sql):
 def naechster_auftrag():
     rows = psql_read(
         "SELECT j.id, j.component_key, j.action, c.service_dir, c.compose_file, c.kind, "
-        "COALESCE(c.backup_script, ''), COALESCE(c.setup_script, '') "
+        "COALESCE(c.backup_script, ''), COALESCE(c.setup_script, ''), COALESCE(j.target, '') "
         "FROM public.platform_agent_jobs j "
         "JOIN public.platform_components c ON c.key = j.component_key "
         "WHERE j.status = 'pending' ORDER BY j.id LIMIT 1")
@@ -310,10 +325,30 @@ def fuehre_aufbau_aus(datei):
     return _schritte_ausfuehren([["bash", datei]], AUFBAU_DIR, AUFBAU_TIMEOUT)
 
 
+def pruefe_modulauftrag(kind, target):
+    """(Datei, Grund) -- eine Erweiterung holt nur der Bestandteil Toolserver,
+    und nur mit einem Key in der Form eines Modulschluessels. Alles andere wird
+    benannt, nicht ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
+    if kind != TOOLSERVER_KIND:
+        return "", "Eine Erweiterung gehoert zum Toolserver, nicht zu einem Bestandteil der Art '%s'." % kind
+    key = (target or "").strip()
+    if not MODUL_KEY.match(key):
+        return "", "Unzulaessiger Modulschluessel '%s' -- erwartet: Kleinbuchstaben, Ziffern, _." % key
+    datei = os.path.join(AUFBAU_DIR, MODUL_SKRIPT)
+    if not os.path.isfile(datei):
+        return "", "%s nicht gefunden -- dieser Server wurde nicht vom Installer eingerichtet." % datei
+    return datei, ""
+
+
+def fuehre_modul_aus(datei, key):
+    """setup-module.sh <key>, festes argv, im Verzeichnis der Aufbauskripte."""
+    return _schritte_ausfuehren([["bash", datei, key]], AUFBAU_DIR, AUFBAU_TIMEOUT)
+
+
 def bearbeite(auftrag):
     (job_id, component_key, action, service_dir, compose_file, kind,
-     backup_script, setup_script) = auftrag
-    log("Auftrag #%s: %s / %s" % (job_id, component_key, action))
+     backup_script, setup_script, target) = auftrag
+    log("Auftrag #%s: %s / %s%s" % (job_id, component_key, action, (" " + target) if target else ""))
     markiere_laufend(job_id)
     if action == "update":
         if not compose_file or not service_dir:
@@ -339,10 +374,16 @@ def bearbeite(auftrag):
             schliesse_ab(job_id, "failed", grund, None)
             return
         lauf = lambda: fuehre_aufbau_aus(datei)  # noqa: E731
+    elif action == "module":
+        datei, grund = pruefe_modulauftrag(kind, target)
+        if grund:
+            schliesse_ab(job_id, "failed", grund, None)
+            return
+        lauf = lambda: fuehre_modul_aus(datei, target.strip())  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v4 kennt 'update', 'restart', 'backup' "
-                     "und 'setup'." % action, None)
+                     "Unbekannte Aktion '%s' -- v5 kennt 'update', 'restart', 'backup', "
+                     "'setup' und 'module'." % action, None)
         return
     try:
         text, code = lauf()
@@ -362,7 +403,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v4 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v5 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()

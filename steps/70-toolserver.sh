@@ -31,25 +31,29 @@
 # Toolserver generated (the installer shows it at the end). Each service script registers
 # its connector in the Toolserver and marks itself installed in its catalogue.
 #
-# OPEN CORE FIRST, EXTENSIONS AFTER, LINGRA NEVER (operator 2026-09-25: "der Auftrag war, nur
-# opencore zu installieren und die anderen Module nachzuziehen bei der Erstinstallation. Als
-# DEMO."; GAP-LIC-BASISINSTALLATION-01). Until then this step cloned the whole repository
-# and copied all of it: a new server carried every module, lingra's internal tile included.
-# Now the working copy holds only the files of the tiers it is asked for (lib/stufen.py reads
-# them from the registry in the start dump; git sparse-checkout keeps the rest out, and the
-# partial clone never even downloads their content). A first installation runs the open core
-# alone, proves that only its tiles are live, and only then pulls the extensions in -- as
-# demo. Files of lingra's internal tier never reach the host. A later run (update) takes base
-# and extensions in one go.
+# THE OPEN CORE ONLY, LINGRA NEVER (operator 2026-09-25: "der Auftrag war, nur opencore zu
+# installieren"; "die Erweiterungen werden selectiv ueber die oberflaeche nach
+# Terminalinstallation geholt"; "lingra darf niemals auftauchen"; GAP-LIC-BASISINSTALLATION-01).
+# Until then this step cloned the whole repository and copied all of it: a new server carried
+# every module, lingra's internal tile included. Now the working copy holds only the files it
+# is asked for (lib/stufen.py reads them from the registry in the start dump; git
+# sparse-checkout keeps the rest out, and the partial clone never even downloads their
+# content). A first installation installs the open core, and proves that only its tiles are
+# live. The extensions are chosen one by one in the Toolserver afterwards (Environment >
+# Server-Config > Modules; the Verwalter runs setup-module.sh). A later run of this step
+# (update) keeps the extensions the Toolserver found installed. Files of lingra's internal
+# tier never reach the host.
 
-STEP_70_TITLE="Toolserver: open core, then the extensions as demo; Weaviate and Nextcloud"
+STEP_70_TITLE="Toolserver (open core), Weaviate and Nextcloud"
 # Where setup-toolserver.sh installs the Toolserver (its own default; this step passes none).
 TOOLSERVER_DIR="/opt/toolserver"
 
 # The setup scripts that travel with this repository and live in /opt/<domain>/ afterwards,
-# where the Verwalter finds them (Environment > Installation, job "setup"). toolserver-link.sh
-# is no setup script: the service scripts source it to tell the Toolserver they exist.
-SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh toolserver-link.sh)
+# where the Verwalter finds them (Environment > Installation, job "setup"; Environment >
+# Server-Config > Modules, job "module" = setup-module.sh). toolserver-link.sh and
+# toolserver-quelle.sh are no setup scripts: the others source them.
+SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-module.sh
+               toolserver-link.sh toolserver-quelle.sh)
 # Full operation (operator 2026-09-25: "alle uebrigen container die wir brauchen fuer den
 # Vollbetrieb bereits waehrend der terminalinstallation"; Weaviate and Nextcloud are the
 # mandatory ones, the rest follows from the interface). Order matters: Weaviate needs no
@@ -67,20 +71,24 @@ step_70_run() {
     _dns_check "${names[@]}" || return 1
     command -v git >/dev/null || pkg_install git
     command -v python3 >/dev/null || pkg_install python3
+    # shellcheck source=../toolserver/toolserver-quelle.sh
+    . "$INSTALL_ROOT/toolserver/toolserver-quelle.sh" || die "toolserver/toolserver-quelle.sh is missing in $INSTALL_ROOT."
 
     local src="$INSTALL_ROOT/src/onions-toolserver"
     mkdir -p "$INSTALL_ROOT/src"
     # an installation order asks its Toolserver for access once more (the first try was
     # before step 1 -- the GitHub access there may have been set up since)
     _git_readable || { order_active && order_request_access && _git_readable; } || return 1
-    # first installation = no Toolserver on this host yet; only then does the open core run alone
-    local erst=false
+    # first installation = no Toolserver on this host yet: the open core alone. A later run
+    # keeps what the interface added -- asked from the Toolserver, never guessed: without its
+    # answer the run stops instead of dropping the extensions from the working copy.
+    local erst=false erw=""
     [[ -f "$TOOLSERVER_DIR/main.py" ]] || erst=true
-    if $erst; then
-        _quelle_holen "$src" base || return 1
-    else
-        _quelle_holen "$src" base addon || return 1
+    if ! $erst; then
+        erw="$(tsq_erweiterungen)" || { log_err "The Toolserver's database did not say which extensions are installed -- start it, then run step 7 again."; return 1; }
     fi
+    # shellcheck disable=SC2086 -- one module key per word
+    _quelle_holen "$src" base $erw || return 1
     _intern_abweisen "$src" || return 1
     log_ok "Toolserver source at $(cd "$src" && git describe --tags --always)."
 
@@ -94,7 +102,6 @@ step_70_run() {
     (cd "$src" && run bash "$INSTANCE_DIR/setup-toolserver.sh" --domain "$DOMAIN" --source "$src" --skip-docker --skip-traefik) || return 1
     if $erst; then
         _nur_basis_pruefen || return 1
-        _erweiterungen_nachziehen "$src" || return 1
     fi
     _module_melden
     _verwalter_einrichten
@@ -111,8 +118,9 @@ step_70_run() {
     log_info "  Environment > Server-Config > Services"
 }
 
-# _quelle_holen <src> <tier>... -- the Toolserver's working copy with the files of these
-# tiers and nothing else. A new clone is partial (--filter=blob:none) and starts empty
+# _quelle_holen <src> <tier or module>... -- the Toolserver's working copy with the files of
+# these tiers and modules and nothing else (tsq_setzen, toolserver/toolserver-quelle.sh --
+# the same function setup-module.sh uses when the interface fetches an extension). A new clone is partial (--filter=blob:none) and starts empty
 # (--no-checkout): the content of a file outside the tiers is never downloaded. An existing
 # copy is brought to the current state first; the tiers are set again on every run, from the
 # start dump of THAT state, so a file registered since then arrives too.
@@ -125,29 +133,8 @@ _quelle_holen() {
         log_info "Cloning $TOOLSERVER_SOURCE to $src (only what the tiers below name)..."
         run git clone -q --filter=blob:none --no-checkout "$TOOLSERVER_SOURCE" "$src" || return 1
     fi
-    _stufen_setzen "$src" "$@"
-}
-
-# _stufen_setzen <src> <tier>... -- which files the working copy holds (git sparse-checkout,
-# the patterns from lib/stufen.py). The pending patches come along as a directory: they are
-# pieces of a delivery, not rows of the registry, and setup-toolserver.sh applies every one
-# lying there to the new database (dbmigrate.sh apply --to alle).
-_stufen_setzen() {
-    local src="$1"; shift
-    local liste zweig n
-    liste="$(mktemp)"
-    if ! git -C "$src" show HEAD:db/schema_seed.sql | python3 "$INSTALL_ROOT/lib/stufen.py" "$@" > "$liste"; then
-        rm -f "$liste"
-        log_err "Which file belongs to which tier could not be read from the start dump (db/schema_seed.sql) -- see above."
-        return 1
-    fi
-    n="$(wc -l < "$liste")"
-    echo "/db/patches/" >> "$liste"
-    run git -C "$src" sparse-checkout set --no-cone --stdin < "$liste" || { rm -f "$liste"; return 1; }
-    rm -f "$liste"
-    zweig="$(git -C "$src" symbolic-ref --short HEAD)"
-    run git -C "$src" checkout -q "$zweig" || return 1
-    log_ok "Working copy holds the $n registered files of: $*"
+    tsq_setzen "$src" "$INSTALL_ROOT/lib/stufen.py" "$@" | tee -a "$LOG_FILE"
+    return "${PIPESTATUS[0]}"
 }
 
 # _intern_abweisen <src> -- lingra's internal tier never belongs on a host (D-OPENCORE-04).
@@ -194,20 +181,8 @@ _nur_basis_pruefen() {
     log_ok "Open core runs on its own: $(IFS=,; echo "${basis[*]}" | sed 's/,/, /g')"
 }
 
-# _erweiterungen_nachziehen <src> -- the extensions follow the open core: their files into the
-# working copy and into /opt/toolserver, then one restart (deploy.sh, which proves beforehand
-# that the application builds from the files on disk). Every extension ships in full function
-# as a demo (D-OPENCORE-12).
-_erweiterungen_nachziehen() {
-    local src="$1"
-    log_info "Pulling in the extensions (demo)..."
-    _stufen_setzen "$src" base addon || return 1
-    run rsync -a --exclude='.git' --exclude='volumes/' --exclude='secrets/' --exclude='.env' \
-        --exclude='__pycache__' --exclude='*.pyc' "$src/" "$TOOLSERVER_DIR/" || return 1
-    run bash "$TOOLSERVER_DIR/deploy.sh" || return 1
-}
-
-# _module_melden -- what this host serves now, by tier, in plain words.
+# _module_melden -- what this host serves now, by tier, in plain words, and where the
+# extensions come from: the interface, one by one, never this terminal.
 _module_melden() {
     local zeilen l t basis=() demo=()
     zeilen="$(_live_module)" || return 0
@@ -220,8 +195,9 @@ _module_melden() {
     log_ok "Open core: $(IFS=,; echo "${basis[*]:-none}" | sed 's/,/, /g')"
     if (( ${#demo[@]} )); then
         log_ok "Extensions (demo): $(IFS=,; echo "${demo[*]}" | sed 's/,/, /g')"
-        log_warn "  This version does not check a demo period yet -- the extensions run in full function."
     fi
+    log_info "Further extensions are chosen in the Toolserver, one by one:"
+    log_info "  Environment > Server-Config > Modules"
 }
 
 # _dns_check <name>... -- every name this step publishes must resolve BEFORE Traefik asks

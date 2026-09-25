@@ -223,6 +223,20 @@ _t_verwalter() {
         && grep -q 'ExecStart=/usr/bin/python3 \$ziel' "$ROOT/steps/70-toolserver.sh"
 }
 check "step 7 installs this host's own Verwalter" _t_verwalter
+# v5: the job "module" runs setup-module.sh with a checked key, for the Toolserver only
+_t_verwalter_modul() {
+    "$(command -v python3 || command -v python)" - "$ROOT/toolserver/verwalter.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("v", sys.argv[1])
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+d, g = v.pruefe_modulauftrag("weaviate", "crm");     assert g and not d
+d, g = v.pruefe_modulauftrag("toolserver", "crm;rm"); assert g and not d
+d, g = v.pruefe_modulauftrag("toolserver", "");      assert g and not d
+d, g = v.pruefe_modulauftrag("toolserver", "crm");   assert d.endswith("setup-module.sh") and not g
+PY
+}
+check "Verwalter v5: module jobs checked before they run" _t_verwalter_modul
+check "Verwalter v5 reads the job's target"         grep -q "COALESCE(j.target, '')" "$ROOT/toolserver/verwalter.py"
 # full operation from the terminal (operator 2026-09-25): Weaviate and Nextcloud in step 7
 _t_services() {
     local f
@@ -612,11 +626,12 @@ check "phase 9 restarts after phase 8"        bash -c '
     a=$(grep -n "^phase 8 " "$1" | cut -d: -f1); b=$(grep -n "^phase 9 " "$1" | cut -d: -f1)
     [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] && sed -n "${b},\$p" "$1" | grep -q "bash \"\$INSTALL_DIR/deploy.sh\""' _ "$_st"
 
-echo "== step 7: open core first, extensions as demo, lingra never"
+echo "== step 7: the open core only, extensions from the interface, lingra never"
 # lib/stufen.py reads the tiers from the start dump; python3 as on the host, python where
 # this test runs without it
 PY="$(command -v python3 || command -v python || true)"
 python3() { "$PY" "$@"; }
+. "$ROOT/toolserver/toolserver-quelle.sh"
 _seed() {
     printf 'COPY governance.project_files (path, project_id, module, file_type, active) FROM stdin;\n'
     printf 'main.py\t1\tcore\tpy\tt\nknowledge/k.py\t1\tknowledge\tpy\tt\ncustomers/c.py\t1\tcustomers\tpy\tt\n'
@@ -625,9 +640,15 @@ _seed() {
     printf 'COPY public.platform_modules (key, package, tier) FROM stdin;\n'
     printf 'core\tcore\tbase\nknowledge\tknowledge\tbase\ncrm\tcustomers\taddon\ngovernance\tgovernance\taddon\nlingra\tlingra\tinternal\n\\.\n'
 }
-check "tier base: the open core only"          [ "$(_seed | python3 "$ROOT/lib/stufen.py" base | tr '\n' ' ')" = "/knowledge/k.py /main.py " ]
-check "tier addon: a module named by package"  [ "$(_seed | python3 "$ROOT/lib/stufen.py" addon | tr '\n' ' ')" = "/customers/c.py /governance/g.py " ]
-check "tier internal: lingra and its files"    [ "$(_seed | python3 "$ROOT/lib/stufen.py" internal | tr '\n' ' ')" = "/CLAUDE.md /lingra/l.py " ]
+_stufen() { _seed | python3 "$ROOT/lib/stufen.py" "$@" | tr '\n' ' '; }
+check "tier base: the open core only"          [ "$(_stufen base)" = "/knowledge/k.py /main.py " ]
+check "tier addon: a module named by package"  [ "$(_stufen addon)" = "/customers/c.py /governance/g.py " ]
+check "tier internal: lingra and its files"    [ "$(_stufen internal)" = "/CLAUDE.md /lingra/l.py " ]
+check "one extension by its tile key"          [ "$(_stufen base crm)" = "/customers/c.py /knowledge/k.py /main.py " ]
+check "one extension by its package"           [ "$(_stufen base governance)" = "/governance/g.py /knowledge/k.py /main.py " ]
+_t_rc() { local want="$1"; shift; _seed | python3 "$ROOT/lib/stufen.py" "$@" >/dev/null 2>&1; [ $? -eq "$want" ]; }
+check "lingra named on its own is refused"     _t_rc 3 base lingra
+check "an unknown module is refused"           _t_rc 2 base nowhere
 _t_unknown_tier() { _seed $'odd/o.py\t1\tnowhere\tpy\tt\n' | python3 "$ROOT/lib/stufen.py" base >/dev/null 2>&1; [ $? -eq 2 ]; }
 check "a file without a tier stops the run"    _t_unknown_tier
 _t_no_registry() { printf 'nothing\n' | python3 "$ROOT/lib/stufen.py" base >/dev/null 2>&1; [ $? -eq 2 ]; }
@@ -637,24 +658,29 @@ _tsrc="$TMP/tsrc"; mkdir -p "$_tsrc"/{knowledge,customers,governance,lingra,db/p
 for f in main.py knowledge/k.py customers/c.py governance/g.py lingra/l.py CLAUDE.md db/patches/v1_x.sql; do echo x > "$_tsrc/$f"; done
 _seed "" > "$_tsrc/db/schema_seed.sql"
 git -C "$_tsrc" init -q && git -C "$_tsrc" add -A && git -C "$_tsrc" -c user.name=t -c user.email=t@t commit -qm x
+_wc="$TMP/wc/onions-toolserver"
 _t_quelle_base() {
-    local src="$TMP/wc/onions-toolserver"
-    TOOLSERVER_SOURCE="$_tsrc" _quelle_holen "$src" base || return 1
-    [[ -f "$src/main.py" && -f "$src/knowledge/k.py" && -f "$src/db/patches/v1_x.sql" ]] \
-        && [[ ! -e "$src/customers" && ! -e "$src/governance" && ! -e "$src/lingra" && ! -e "$src/CLAUDE.md" ]]
+    TOOLSERVER_SOURCE="$_tsrc" _quelle_holen "$_wc" base || return 1
+    [[ -f "$_wc/main.py" && -f "$_wc/knowledge/k.py" && -f "$_wc/db/patches/v1_x.sql" ]] \
+        && [[ ! -e "$_wc/customers" && ! -e "$_wc/governance" && ! -e "$_wc/lingra" && ! -e "$_wc/CLAUDE.md" ]]
 }
 check "first clone holds the open core only"   _t_quelle_base
-_t_quelle_addon() {
-    local src="$TMP/wc/onions-toolserver"
-    _stufen_setzen "$src" base addon || return 1
-    [[ -f "$src/customers/c.py" && -f "$src/governance/g.py" && ! -e "$src/lingra" && ! -e "$src/CLAUDE.md" ]]
+# what setup-module.sh does when the interface fetches ONE extension
+_t_quelle_eine() {
+    tsq_setzen "$_wc" "$ROOT/lib/stufen.py" base crm || return 1
+    [[ -f "$_wc/customers/c.py" && ! -e "$_wc/governance" && ! -e "$_wc/lingra" && ! -e "$_wc/CLAUDE.md" ]]
 }
-check "extensions follow, lingra stays out"    _t_quelle_addon
+check "one extension joins, the others stay out" _t_quelle_eine
+_t_quelle_lingra() {
+    ! tsq_setzen "$_wc" "$ROOT/lib/stufen.py" base crm lingra || return 1
+    [[ -f "$_wc/customers/c.py" && ! -e "$_wc/lingra" ]]
+}
+check "asking for lingra changes nothing"      _t_quelle_lingra
 _t_intern() {
     local d="$TMP/opt_ts"; mkdir -p "$d"
-    TOOLSERVER_DIR="$d" _intern_abweisen "$TMP/wc/onions-toolserver" || return 1
+    TOOLSERVER_DIR="$d" _intern_abweisen "$_wc" || return 1
     mkdir -p "$d/lingra"; echo x > "$d/lingra/l.py"
-    ! TOOLSERVER_DIR="$d" _intern_abweisen "$TMP/wc/onions-toolserver"
+    ! TOOLSERVER_DIR="$d" _intern_abweisen "$_wc"
 }
 check "a host with lingra's files is sent to a fresh installation" _t_intern
 _t_basis_allein() {
@@ -663,15 +689,44 @@ _t_basis_allein() {
     _live_module() { printf 'Knowledge|base\nlingra|internal\n'; }; ! _nur_basis_pruefen
 }
 check "the open core must run alone first"     _t_basis_allein
-_t_order() {
-    local body; body="$(sed -n '/^step_70_run()/,/^}/p' "$ROOT/steps/70-toolserver.sh")"
-    local a b c
-    a=$(grep -n 'setup-toolserver.sh" --domain' <<< "$body" | cut -d: -f1)
-    b=$(grep -n '_nur_basis_pruefen' <<< "$body" | cut -d: -f1)
-    c=$(grep -n '_erweiterungen_nachziehen' <<< "$body" | cut -d: -f1)
-    [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ]
+_body70="$(sed -n '/^step_70_run()/,/^}/p' "$ROOT/steps/70-toolserver.sh")"
+# the terminal pulls no extension: nothing after the proof copies or restarts, no module script
+_t_kein_nachziehen() {
+    local a b
+    a=$(grep -n 'setup-toolserver.sh" --domain' <<< "$_body70" | cut -d: -f1)
+    b=$(grep -n '_nur_basis_pruefen' <<< "$_body70" | cut -d: -f1)
+    [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || return 1
+    ! grep -qE 'rsync|deploy\.sh|setup-module\.sh|addon' <<< "$_body70" || return 1
+    ! grep -q '_erweiterungen_nachziehen' "$ROOT/steps/70-toolserver.sh"
 }
-check "open core runs, is checked, then the extensions" _t_order
+check "the terminal installs the open core, no extension" _t_kein_nachziehen
+check "a re-run keeps the installed extensions, or stops" grep -q 'erw="$(tsq_erweiterungen)" ||' <<< "$_body70"
+check "setup-module.sh and its source travel to the host" bash -c '
+    grep -q "setup-module.sh" "$1" && grep -q "toolserver-quelle.sh" "$1"' _ "$ROOT/steps/70-toolserver.sh"
+# setup-module.sh refuses before it touches anything; docker answers from a fixture
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/docker" <<'DOCKER'
+#!/bin/bash
+q="${*: -1}"
+case "$q" in
+    *"key = 'lingra'"*)     echo "internal|f|" ;;
+    *"key = 'knowledge'"*)  echo "base|t|" ;;
+    *"key = 'governance'"*) echo "addon|t|workspace" ;;
+    *) : ;;
+esac
+DOCKER
+chmod +x "$TMP/bin/docker"
+_t_modul() {
+    local want="$1"; shift
+    PATH="$TMP/bin:$PATH" INSTALL_ROOT="$ROOT" TOOLSERVER_SRC="$_wc" TOOLSERVER_DIR="$TMP/opt_mod" \
+        bash "$ROOT/toolserver/setup-module.sh" "$@" >/dev/null 2>&1
+    [ $? -eq "$want" ]
+}
+check "setup-module: a malformed key is refused"    _t_modul 1 'crm;rm -rf /'
+check "setup-module: an unknown module is refused"  _t_modul 1 nowhere
+check "setup-module: lingra is refused"             _t_modul 1 lingra
+check "setup-module: the open core is no extension" _t_modul 1 knowledge
+check "setup-module: installed already = nothing"   _t_modul 0 governance
 
 echo
 echo "$PASS passed, $FAIL failed"

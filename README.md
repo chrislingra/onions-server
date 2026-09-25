@@ -40,14 +40,17 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    on the Toolserver manages the host (Environment > Server-Config > Services), sets up
    further services from Environment > Installation and maintains the copies in
    `/opt/<domain>/`.
-   **Open core first, the extensions after it, lingra never** (operator 2026-09-25). Step 7
-   does not copy the whole repository: `lib/stufen.py` reads from the start dump
-   (`db/schema_seed.sql`) which registered file belongs to which tier -- base (open core),
-   addon (extension, shipped as demo), internal (lingra's own, never shipped) -- and git's
-   sparse checkout of a partial clone holds exactly those files. A first installation runs
-   the open core alone, checks that only its tiles are live, then pulls the extensions in
-   and restarts. A host that still carries internal files from an older installation is
-   sent to a fresh installation. This version does not check a demo period yet.
+   **The terminal installs the open core only; extensions are chosen in the interface;
+   lingra never** (operator 2026-09-25). Step 7 does not copy the whole repository:
+   `lib/stufen.py` reads from the start dump (`db/schema_seed.sql`) which registered file
+   belongs to which tier -- base (open core), addon (extension, shipped as demo), internal
+   (lingra's own, never shipped) -- and git's sparse checkout of a partial clone holds
+   exactly those files. A first installation runs the open core alone and checks that only
+   its tiles are live. Each extension is then fetched from Environment > Server-Config >
+   Modules: the Toolserver writes a job (action `module`), the Verwalter runs
+   `setup-module.sh <key>`, which adds that module's files (and those it requires) and
+   restarts. A later run of step 7 keeps the extensions installed so far. A host that still
+   carries internal files from an older installation is sent to a fresh installation.
 7. **Checklist as data**: `checklist/PREPARATION.md` lists what to have ready; `site.env`
    holds the answers. **No password lives in this repository or in `site.env`** -- they
    are asked hidden at the moment of use.
@@ -148,7 +151,7 @@ use it, never prompts, and shows git's reason if it fails.
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver, Weaviate, Nextcloud | checks the DNS records of `tools.`, `nextcloud.`, `office.` first; probes `TOOLSERVER_SOURCE` without prompting, clones it; clones only the open core (partial clone, sparse checkout from the registry in the start dump); places the setup scripts of `toolserver/` into `/opt/<domain>/` and runs `setup-toolserver.sh` with `--skip-docker --skip-traefik` (superadmin password generated, restart at the end); checks that only open-core tiles are live, then pulls the extensions in as demo -- lingra's internal tier never; this host's own Verwalter (`toolserver/verwalter.py`, systemd unit `onions-verwalter`) that carries out the interface's jobs; `setup-weaviate.sh` and `setup-nextcloud.sh`, each registering its connector; handover |
+| 7 Toolserver, Weaviate, Nextcloud | checks the DNS records of `tools.`, `nextcloud.`, `office.` first; probes `TOOLSERVER_SOURCE` without prompting, clones it; clones only the open core (partial clone, sparse checkout from the registry in the start dump); places the setup scripts of `toolserver/` into `/opt/<domain>/` and runs `setup-toolserver.sh` with `--skip-docker --skip-traefik` (superadmin password generated, restart at the end); checks that only open-core tiles are live -- no extension, and lingra's internal tier never (extensions come from Environment > Server-Config > Modules, one by one); this host's own Verwalter (`toolserver/verwalter.py`, systemd unit `onions-verwalter`) that carries out the interface's jobs; `setup-weaviate.sh` and `setup-nextcloud.sh`, each registering its connector; handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout
@@ -159,11 +162,13 @@ lib/common.sh           logging (terminal + log), prompts, backups, config-line 
 lib/os.sh               the distribution layer: packages, services, firewall, Docker, locale
 lib/checklist.sh        the checklist items, validation, site.env
 lib/order.sh            the installation order: fetch by code, answers, generated passwords, done
-lib/stufen.py           which Toolserver file belongs to which tier, read from its start dump
+lib/stufen.py           which Toolserver file belongs to which tier or module, read from its start dump
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
-toolserver/             setup-toolserver.sh, setup-weaviate.sh, setup-nextcloud.sh, toolserver-link.sh
-                        (what they share), verwalter.py -- placed into /opt/<domain>/ by step 7
+toolserver/             setup-toolserver.sh, setup-weaviate.sh, setup-nextcloud.sh, setup-module.sh
+                        (one extension, run by the Verwalter), toolserver-link.sh and
+                        toolserver-quelle.sh (what they share), verwalter.py -- placed into
+                        /opt/<domain>/ by step 7
 checklist/PREPARATION.md what to have ready
 tests/selftest.sh       checks without root (syntax, detection, checklist, prompts, ...)
 .instance               the domain of this host (gitignored)
