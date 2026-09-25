@@ -216,6 +216,13 @@ check "step 7 never prompts" [ "$(TOOLSERVER_SOURCE="$TMP/nowhere" _git_readable
 # the source is fixed, never asked (operator 2026-09-24)
 _t_source_fixed() { ! grep -qE '^[[:space:]]*"TOOLSERVER_' "$ROOT/lib/checklist.sh" && grep -q '^TOOLSERVER_SOURCE=' "$ROOT/install.sh"; }
 check "Toolserver source is not a question" _t_source_fixed
+# every installation gets its own Verwalter (operator 2026-09-25)
+_t_verwalter() {
+    [[ -s "$ROOT/toolserver/verwalter.py" ]] \
+        && sed -n '/^step_70_run()/,/^}/p' "$ROOT/steps/70-toolserver.sh" | grep -q '_verwalter_einrichten' \
+        && grep -q 'ExecStart=/usr/bin/python3 \$ziel' "$ROOT/steps/70-toolserver.sh"
+}
+check "step 7 installs this host's own Verwalter" _t_verwalter
 _t_no_keys() { ! grep -qE '^[[:space:]]*(run[[:space:]]+)?ssh-keygen|api.github.com|ask_secret|IdentitiesOnly' "$ROOT/steps/70-toolserver.sh"; }
 check "step 7 carries no key apparatus" _t_no_keys
 # ask prints its question block first (structured, one line per answer), so the value is the

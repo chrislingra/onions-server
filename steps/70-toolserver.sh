@@ -48,11 +48,54 @@ step_70_run() {
     log_ok "Setup script placed at $setup (the Toolserver lists and maintains it there)."
     log_info "Handing over to the Toolserver's setup (Docker and Traefik are done here)."
     (cd "$src" && run bash "$setup" --domain "$DOMAIN" --source "$src" --skip-docker --skip-traefik)
+    _verwalter_einrichten
     step_done 70
     echo
     log_ok "Handover complete. The Toolserver now owns the host: https://tools.$DOMAIN"
     log_info "Everything beyond this point (services, backups, updates) is managed there:"
     log_info "  Environment > Server-Config > Services"
+}
+
+# _verwalter_einrichten -- every installation gets its own Verwalter (operator 2026-09-25:
+# "jede neuinstallation braucht einen eigenen Verwalter"; GAP-ENV-VERWALTER-JE-INSTALLATION-01).
+# The Toolserver only WRITES jobs into public.platform_agent_jobs; this root service on the
+# host carries them out (update, restart, backup, setup). Without it no button of the
+# interface has an effect on this host. It lives next to the setup scripts in /opt/<domain>
+# -- it finds them in its own directory. The unit names this domain's path; on the Onions
+# server the same file sits in /opt/onions.one. Re-running rewrites both and restarts.
+_verwalter_einrichten() {
+    local quelle="$INSTALL_ROOT/toolserver/verwalter.py"
+    local ziel="$INSTANCE_DIR/verwalter.py"
+    local unit="/etc/systemd/system/onions-verwalter.service"
+    [[ -f "$quelle" ]] || die "toolserver/verwalter.py is missing in $INSTALL_ROOT."
+    command -v python3 >/dev/null || pkg_install python3
+    run install -m 750 "$quelle" "$ziel"
+    cat > "$unit" <<EOF
+[Unit]
+Description=onions.one Verwalter for $DOMAIN (GAP-ENV-LEITSTELLE-01)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 $ziel
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    run systemctl daemon-reload
+    run systemctl enable onions-verwalter.service
+    run systemctl restart onions-verwalter.service
+    sleep 2
+    if systemctl is-active --quiet onions-verwalter.service; then
+        log_ok "Verwalter running ($ziel) -- the buttons under Environment > Installation act on this host."
+    else
+        log_err "Verwalter did not start -- see: journalctl -u onions-verwalter -n 30"
+        return 1
+    fi
 }
 
 # _git_probe -- can this host read TOOLSERVER_SOURCE the way git will use it, without asking

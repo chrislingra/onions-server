@@ -100,7 +100,7 @@ use it, never prompts, and shows git's reason if it fails.
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver | probes `TOOLSERVER_SOURCE` without prompting, clones it, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik` (first-login password generated, printed once), handover |
+| 7 Toolserver | probes `TOOLSERVER_SOURCE` without prompting, clones it, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik` (first-login password generated, printed once), then this host's own Verwalter (`toolserver/verwalter.py` to `/opt/<domain>/`, systemd unit `onions-verwalter`) that carries out the interface's jobs, handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout
