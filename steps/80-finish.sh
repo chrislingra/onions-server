@@ -100,4 +100,30 @@ step_80_run() {
     rm -f "$STATE_DIR/bootstrap-password.txt"
     step_done 80
     log_ok "Bootstrap user removed. The installation is complete -- the Toolserver runs the host from here."
+    next_steps
+}
+
+# next_steps -- what comes after the installer (operator 2026-09-25: "was auch fehlt, wie es
+# weitergeht! einloggen im Browser. mit welchem user? restliches setup via gui"). Printed at
+# the end of step 8 and under the menu once every step is done. Menu places as they stand in
+# public.menu_nodes (measured 2026-09-25), not from memory.
+next_steps() {
+    local pwfile="/opt/toolserver/secrets/admin_password"
+    echo
+    echo "================================================================"
+    echo "  How to continue -- in the browser"
+    echo "================================================================"
+    echo "   1) Open    https://tools.$DOMAIN/menu"
+    echo "   2) Log in  user: admin"
+    if [[ -s "$pwfile" ]]; then
+        echo "              password: $(cat "$pwfile")"
+    else
+        echo "              password: the one step 7 printed (file $pwfile)"
+    fi
+    echo "   3) The rest of the setup is done there, not here:"
+    echo "              Environment > Installation   further services (Nextcloud, Weaviate, Open WebUI, ...)"
+    echo "              Environment > Server-Config  running services, backups, logs"
+    echo
+    echo "  This installer has nothing more to do on this host."
+    echo
 }

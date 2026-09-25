@@ -169,6 +169,7 @@ main_menu() {
             echo "   a) Continue: every open step, from step $((open / 10)) on"
         else
             echo "   a) All steps are done"
+            echo "   n) Next: how to continue in the browser (login, rest of the setup)"
         fi
         echo "   v) Show checklist values"
         echo "   h) Help -- what the steps do and in which order"
@@ -181,10 +182,11 @@ main_menu() {
             0) checklist_review; pause ;;
             [1-8]) run_step "$((reply * 10))" || true; pause ;;
             a|A) run_all || true; pause ;;
+            n|N) next_steps; pause ;;
             v|V) checklist_show; pause ;;
             h|H|\?) help_show menu "Main menu"; pause ;;
             q|Q) exit 0 ;;
-            *) echo "  Enter 0-8, a, v, h or q." ; sleep 1 ;;
+            *) echo "  Enter 0-8, a, n, v, h or q." ; sleep 1 ;;
         esac
     done
 }
