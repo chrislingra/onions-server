@@ -225,6 +225,11 @@ main() {
     # empfehlung keine pause kommt, sieht das niemand"). The banner carries a one-line
     # version of the same verdict afterwards, so it stays visible.
     os_support_report
+    # An order asks the Toolserver that issued it for read access to the source -- before
+    # step 1, so the verdict below is already the one step 7 will meet (lib/order.sh).
+    if order_active && ! step_is_done 70 && command -v git >/dev/null && ! _git_probe >/dev/null 2>&1; then
+        order_request_access || true
+    fi
     # Whether step 7 can work at all is known before step 1 -- say it now, not after six steps.
     step_is_done 70 || toolserver_precheck
     echo

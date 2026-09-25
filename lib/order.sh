@@ -175,6 +175,50 @@ order_smtp_password() {
     printf '%s' "$pw"
 }
 
+# order_request_access -- read access to the Toolserver's source for this host, asked of the
+# Toolserver that issued the order (operator 2026-09-25: "koennen wir das individuelle
+# gittoken nicht automatisch generieren lassen, und an eine adresse senden, das die
+# freischaltung in git uebernimmt?"; GAP-ENV-INSTALL-ZUGANG-AUTOMATISCH-01). Until release
+# level 1 the source is private, and step 7 gets past it only with this host's key registered
+# as a read-only deploy key. The host makes its own key; only the PUBLIC half leaves the
+# machine, together with the code. The Toolserver checks the code and registers the key with
+# its own GitHub access -- no token ever comes here. Called before step 1 and, if the source
+# is still unreadable, once more by step 7. 0 when git can read the source afterwards.
+ORDER_HOST_KEY="${ORDER_HOST_KEY:-/root/.ssh/id_ed25519}"
+order_request_access() {
+    order_active || return 1
+    local code origin answer i
+    code="$(_order_meta CODE)"; origin="$(_order_meta ORIGIN)"
+    if [[ -z "$code" || -z "$origin" ]]; then
+        log_warn "Source access: the order carries no code any more -- nothing to ask the Toolserver with."
+        return 1
+    fi
+    if [[ ! -f "$ORDER_HOST_KEY" ]]; then
+        install -d -m 700 "$(dirname "$ORDER_HOST_KEY")"
+        ssh-keygen -q -t ed25519 -N '' -C "root@$DOMAIN" -f "$ORDER_HOST_KEY" \
+            || { log_err "Source access: ssh-keygen could not create $ORDER_HOST_KEY."; return 1; }
+        log_ok "Key of this host created: $ORDER_HOST_KEY.pub"
+    fi
+    log_info "Source access: asking $origin to register this host's public key (read-only)..."
+    if ! answer="$(curl -sS --max-time 30 -X POST -H 'Content-Type: text/plain' \
+                        --data-binary @"$ORDER_HOST_KEY.pub" "$origin/api/install-order/$code/deploy-key" 2>&1)"; then
+        log_warn "Source access: the Toolserver at $origin cannot be reached -- step 7 tries again."
+        return 1
+    fi
+    case "$answer" in
+        ok*) log_ok "Source access granted: this host's key is a read-only deploy key (${answer#ok })." ;;
+        *)   log_warn "Source access NOT granted. The Toolserver says: ${answer#onions.one: }"
+             return 1 ;;
+    esac
+    # A new deploy key takes a moment at GitHub before git accepts it.
+    for i in 1 2 3 4 5 6; do
+        _git_probe >/dev/null 2>&1 && { log_ok "Git reads the Toolserver source with this key."; return 0; }
+        sleep 5
+    done
+    log_warn "The key is registered, but git cannot read the source yet -- step 7 tries again."
+    return 1
+}
+
 # order_new_password -> 16 random letters and digits (the same recipe as the bootstrap user's)
 order_new_password() { openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 16; }
 

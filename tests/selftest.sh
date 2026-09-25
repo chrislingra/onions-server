@@ -491,6 +491,37 @@ _t_order_finish() (
 )
 check "done after step 8"                        _t_order_finish y
 check "done after step 7 when the order keeps manager" _t_order_finish n
+# source access (GAP-ENV-INSTALL-ZUGANG-AUTOMATISCH-01): the host's own key, only the public
+# half with the code to the Toolserver, never a token here
+_t_order_access() (
+    INSTANCE_DIR="$TMP/ok-$1"; STATE_DIR="$INSTANCE_DIR/state"; LOG_FILE="$TMP/ok.log"; mkdir -p "$STATE_DIR"
+    printf 'DOMAIN=x.de\n' > "$INSTANCE_DIR/order.env"
+    printf 'CODE=abc\nORIGIN=https://t.x\n' > "$STATE_DIR/order.code"
+    order_load; DOMAIN=x.de
+    ORDER_HOST_KEY="$TMP/ok-$1/ssh/id_ed25519"
+    ssh-keygen() { local f; while (( $# )); do [[ "$1" == -f ]] && f="$2"; shift; done
+                   echo PRIVATE > "$f"; echo "ssh-ed25519 AAAAC3Nz root@x.de" > "$f.pub"; }
+    curl() { local a; for a in "$@"; do [[ "$a" == @* ]] && cat "${a#@}" > "$INSTANCE_DIR/sent"; done
+             [[ "$*" == *"https://t.x/api/install-order/abc/deploy-key"* ]] || return 7
+             if [[ "$MODE" == ok ]]; then printf 'ok 4711'; else printf 'onions.one: no GitHub access set up'; fi; }
+    _git_probe() { [[ "$MODE" == ok ]]; }
+    MODE="$1"; sleep() { :; }
+    rc=0; order_request_access >/dev/null 2>&1 || rc=$?
+    [[ "$(cat "$INSTANCE_DIR/sent" 2>/dev/null)" == "ssh-ed25519 AAAAC3Nz root@x.de" ]] || exit 1
+    grep -q PRIVATE "$ORDER_HOST_KEY" || exit 2
+    if [[ "$1" == ok ]]; then (( rc == 0 )) || exit 3; else (( rc != 0 )) || exit 4; fi
+    exit 0
+)
+check "source access: the public key goes with the code" _t_order_access ok
+check "source access: a refusal stops nothing, it is said"  _t_order_access no
+_t_access_no_order() { ( INSTANCE_DIR="$TMP/nix"; STATE_DIR="$TMP/nix/state"; ! order_request_access ); }
+check "source access needs an order"  _t_access_no_order
+# the one upload of lib/order.sh is the .pub file -- the private half has no way out
+_t_only_pub_leaves() {
+    [ "$(grep -c -- '--data-binary' "$ROOT/lib/order.sh")" = "1" ] \
+        && grep -qF -- '--data-binary @"$ORDER_HOST_KEY.pub"' "$ROOT/lib/order.sh"
+}
+check "the private key never leaves the host" _t_only_pub_leaves
 # a resumed run keeps the relay it built -- the password was fetched once and is gone
 printf 'account relay\nhost smtp.ionos.de\nport 587\nuser a+b@x.de\npassword geheim\n' > "$TMP/msmtprc"
 check "the relay file is for this mailbox"   _msmtprc_is_for smtp.ionos.de a+b@x.de "$TMP/msmtprc"

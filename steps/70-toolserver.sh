@@ -21,6 +21,9 @@
 # if that fails, shows git's reason and stops. The deploy-key apparatus of 2026-09-17
 # (one key per repository, registration through the GitHub API with a token) is gone --
 # it was a crutch of the closed phase, not a product path.
+# With an installation order the host asks the Toolserver that issued it for the deploy key
+# instead (lib/order.sh, order_request_access; GAP-ENV-INSTALL-ZUGANG-AUTOMATISCH-01): the
+# public key and the code go there, the token stays there. This step only calls it.
 #
 # Since 2026-09-25 (GAP-ENV-INSTALL-VOLLBETRIEB-01) the step also sets up the services of
 # full operation, Weaviate and Nextcloud, with their own setup scripts from toolserver/.
@@ -53,7 +56,9 @@ step_70_run() {
 
     local src="$INSTALL_ROOT/src/onions-toolserver"
     mkdir -p "$INSTALL_ROOT/src"
-    _git_readable || return 1
+    # an installation order asks its Toolserver for access once more (the first try was
+    # before step 1 -- the GitHub access there may have been set up since)
+    _git_readable || { order_active && order_request_access && _git_readable; } || return 1
     if [[ -d "$src/.git" ]]; then
         log_info "Updating $src to the current state..."
         (cd "$src" && run git fetch --tags origin && run git pull -q --ff-only)

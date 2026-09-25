@@ -110,7 +110,13 @@ differently:
    asks for it at the terminal -- the only question an order run can ever ask.
 4. Further admins come from the order (name, optionally a public key; each gets sudo). The
    sshd hardening of step 3 runs only when the order asks for it AND every admin has a key.
-5. Interrupted, the run continues with a plain `bash install.sh` -- the order stays on the
+5. Source access for step 7: before step 1 the host creates its own key
+   (`/root/.ssh/id_ed25519`) and sends the PUBLIC half with the code to the Toolserver, which
+   registers it as a read-only deploy key of the private source -- with its own GitHub access
+   (a connector of kind *GitHub (source access)*); no token ever reaches the new host. The
+   mask shows the key per order and revokes it. Without that connector the Toolserver says
+   so, and step 7 stops as it always did.
+6. Interrupted, the run continues with a plain `bash install.sh` -- the order stays on the
    host. When step 7 and step 8 are done (or the order keeps `manager`), the installer
    reports the order done; the code is dead from then on and the host is interactive again.
 
