@@ -604,6 +604,74 @@ _t_catalogue() {
     grep -q "key IN ('a') AND installed_at IS NULL" "$d/sql" && grep -q "key IN ('b') AND installed_at IS NOT NULL" "$d/sql"
 }
 check "7f marks what is on the host, and only that" _t_catalogue
+# no empty module directories (Python takes one for a package, the Toolserver imported it and
+# stopped at start), .git never reaches the runtime, and one restart after the database is in
+check "phase 3 creates no module directories" bash -c '! grep -qE "^[^#]*mkdir -p.*(workspace|governance|customers)" "$1"' _ "$_st"
+check "every copy leaves .git behind"         bash -c '! grep -E "^[[:space:]]*rsync " "$1" | grep -v "exclude=.\.git." | grep -q .' _ "$_st"
+check "phase 9 restarts after phase 8"        bash -c '
+    a=$(grep -n "^phase 8 " "$1" | cut -d: -f1); b=$(grep -n "^phase 9 " "$1" | cut -d: -f1)
+    [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] && sed -n "${b},\$p" "$1" | grep -q "bash \"\$INSTALL_DIR/deploy.sh\""' _ "$_st"
+
+echo "== step 7: open core first, extensions as demo, lingra never"
+# lib/stufen.py reads the tiers from the start dump; python3 as on the host, python where
+# this test runs without it
+PY="$(command -v python3 || command -v python || true)"
+python3() { "$PY" "$@"; }
+_seed() {
+    printf 'COPY governance.project_files (path, project_id, module, file_type, active) FROM stdin;\n'
+    printf 'main.py\t1\tcore\tpy\tt\nknowledge/k.py\t1\tknowledge\tpy\tt\ncustomers/c.py\t1\tcustomers\tpy\tt\n'
+    printf 'governance/g.py\t1\tgovernance\tpy\tt\nlingra/l.py\t1\tlingra\tpy\tt\nCLAUDE.md\t1\tlingra\tmd\tt\n'
+    printf 'old/x.py\t1\tknowledge\tpy\tf\n'"${1:-}"'\\.\n'
+    printf 'COPY public.platform_modules (key, package, tier) FROM stdin;\n'
+    printf 'core\tcore\tbase\nknowledge\tknowledge\tbase\ncrm\tcustomers\taddon\ngovernance\tgovernance\taddon\nlingra\tlingra\tinternal\n\\.\n'
+}
+check "tier base: the open core only"          [ "$(_seed | python3 "$ROOT/lib/stufen.py" base | tr '\n' ' ')" = "/knowledge/k.py /main.py " ]
+check "tier addon: a module named by package"  [ "$(_seed | python3 "$ROOT/lib/stufen.py" addon | tr '\n' ' ')" = "/customers/c.py /governance/g.py " ]
+check "tier internal: lingra and its files"    [ "$(_seed | python3 "$ROOT/lib/stufen.py" internal | tr '\n' ' ')" = "/CLAUDE.md /lingra/l.py " ]
+_t_unknown_tier() { _seed $'odd/o.py\t1\tnowhere\tpy\tt\n' | python3 "$ROOT/lib/stufen.py" base >/dev/null 2>&1; [ $? -eq 2 ]; }
+check "a file without a tier stops the run"    _t_unknown_tier
+_t_no_registry() { printf 'nothing\n' | python3 "$ROOT/lib/stufen.py" base >/dev/null 2>&1; [ $? -eq 2 ]; }
+check "a dump without the registry stops"      _t_no_registry
+# a source repository with the fixture, then the working copy the way step 7 builds it
+_tsrc="$TMP/tsrc"; mkdir -p "$_tsrc"/{knowledge,customers,governance,lingra,db/patches}
+for f in main.py knowledge/k.py customers/c.py governance/g.py lingra/l.py CLAUDE.md db/patches/v1_x.sql; do echo x > "$_tsrc/$f"; done
+_seed "" > "$_tsrc/db/schema_seed.sql"
+git -C "$_tsrc" init -q && git -C "$_tsrc" add -A && git -C "$_tsrc" -c user.name=t -c user.email=t@t commit -qm x
+_t_quelle_base() {
+    local src="$TMP/wc/onions-toolserver"
+    TOOLSERVER_SOURCE="$_tsrc" _quelle_holen "$src" base || return 1
+    [[ -f "$src/main.py" && -f "$src/knowledge/k.py" && -f "$src/db/patches/v1_x.sql" ]] \
+        && [[ ! -e "$src/customers" && ! -e "$src/governance" && ! -e "$src/lingra" && ! -e "$src/CLAUDE.md" ]]
+}
+check "first clone holds the open core only"   _t_quelle_base
+_t_quelle_addon() {
+    local src="$TMP/wc/onions-toolserver"
+    _stufen_setzen "$src" base addon || return 1
+    [[ -f "$src/customers/c.py" && -f "$src/governance/g.py" && ! -e "$src/lingra" && ! -e "$src/CLAUDE.md" ]]
+}
+check "extensions follow, lingra stays out"    _t_quelle_addon
+_t_intern() {
+    local d="$TMP/opt_ts"; mkdir -p "$d"
+    TOOLSERVER_DIR="$d" _intern_abweisen "$TMP/wc/onions-toolserver" || return 1
+    mkdir -p "$d/lingra"; echo x > "$d/lingra/l.py"
+    ! TOOLSERVER_DIR="$d" _intern_abweisen "$TMP/wc/onions-toolserver"
+}
+check "a host with lingra's files is sent to a fresh installation" _t_intern
+_t_basis_allein() {
+    _live_module() { printf 'Knowledge|base\nAdmin|base\n'; }; _nur_basis_pruefen || return 1
+    _live_module() { printf 'Knowledge|base\nGovernance|addon\n'; }; ! _nur_basis_pruefen || return 1
+    _live_module() { printf 'Knowledge|base\nlingra|internal\n'; }; ! _nur_basis_pruefen
+}
+check "the open core must run alone first"     _t_basis_allein
+_t_order() {
+    local body; body="$(sed -n '/^step_70_run()/,/^}/p' "$ROOT/steps/70-toolserver.sh")"
+    local a b c
+    a=$(grep -n 'setup-toolserver.sh" --domain' <<< "$body" | cut -d: -f1)
+    b=$(grep -n '_nur_basis_pruefen' <<< "$body" | cut -d: -f1)
+    c=$(grep -n '_erweiterungen_nachziehen' <<< "$body" | cut -d: -f1)
+    [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ]
+}
+check "open core runs, is checked, then the extensions" _t_order
 
 echo
 echo "$PASS passed, $FAIL failed"

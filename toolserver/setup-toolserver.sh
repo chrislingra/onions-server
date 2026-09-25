@@ -20,6 +20,12 @@
 #   Phase 8: Create superadmin user with the password generated in phase 4
 #            (printed once in the summary), retried against a container that
 #            may still be starting (v1505, v1507; generated since 2026-09-19)
+#   Phase 9: Restart through deploy.sh, so the Toolserver measures which
+#            modules lie on THIS host (2026-09-25)
+#
+# What gets copied is the working copy handed over with --source. The installer's
+# step 7 fills it by tier from the registry (lib/stufen.py): the open core first,
+# the extensions after it -- never lingra's internal tier.
 #
 # Where this script lives (2026-09-19): the Toolserver repository carries no setup
 # script any more ("scripts/setup-*.sh darf es nicht geben", operator 2026-09-18);
@@ -226,9 +232,13 @@ fi
 # ═══════════════════════════════════════════════════════════════
 phase 3 "Directory Structure"
 
+# No module directories here (until 2026-09-25 this created knowledge/, admin/, workspace/,
+# governance/, customers/ ... empty): the copy below brings every module that belongs on this
+# host, and an EMPTY module directory is a trap -- Python takes it for a package, the
+# Toolserver took the module for installed, imported it and stopped at start. A server with
+# the open core alone (GAP-LIC-BASISINSTALLATION-01) never came up.
 if [ "$DRY_RUN" = false ]; then
     mkdir -p "$INSTALL_DIR"/{secrets,volumes/pg-data,db/patches,scripts,static/screens,exports,xdoc}
-    mkdir -p "$INSTALL_DIR"/{knowledge,admin,workspace,governance,customers,environment,core,services,routers,skills,installation}
     chmod 700 "$INSTALL_DIR/secrets"
     log "Directory structure created at $INSTALL_DIR"
 else
@@ -239,7 +249,8 @@ fi
 if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
     if [ "$DRY_RUN" = false ]; then
         info "Copying codebase from $SOURCE_DIR..."
-        rsync -a --exclude='volumes/' --exclude='secrets/' --exclude='.env' \
+        # .git stays in the source: $INSTALL_DIR is the runtime, never a repository
+        rsync -a --exclude='.git' --exclude='volumes/' --exclude='secrets/' --exclude='.env' \
             --exclude='__pycache__' --exclude='*.pyc' \
             "$SOURCE_DIR/" "$INSTALL_DIR/"
         log "Codebase copied"
@@ -250,7 +261,7 @@ elif [ -f "./main.py" ] && [ -f "./requirements.txt" ]; then
     if [ "$DRY_RUN" = false ]; then
         if [ "$(pwd)" != "$INSTALL_DIR" ]; then
             info "Copying codebase from current directory..."
-            rsync -a --exclude='volumes/' --exclude='secrets/' --exclude='.env' \
+            rsync -a --exclude='.git' --exclude='volumes/' --exclude='secrets/' --exclude='.env' \
                 --exclude='__pycache__' --exclude='*.pyc' \
                 "./" "$INSTALL_DIR/"
             log "Codebase copied from $(pwd)"
@@ -695,6 +706,24 @@ SQL
     fi
 else
     info "[DRY RUN] Would create superadmin user with the password generated in phase 4"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 9: Restart -- the Toolserver measures its own modules
+# ═══════════════════════════════════════════════════════════════
+# Phase 6 started the container BEFORE phase 7 loaded its database. Its start-up check of the
+# modules (core/core_module_presence.py: which packages lie here, written to
+# public.platform_modules.installed) therefore found no table, and the seed then brought the
+# Onions server's values instead: every tile there counted as installed here, whether its files
+# were on this host or not. One restart through deploy.sh (which first proves the application
+# builds from the files on disk) makes the measurement this host's own -- and makes the files
+# this run copied live, which until 2026-09-25 waited for the next restart of whoever came by.
+phase 9 "Restart"
+if [ "$DRY_RUN" = false ]; then
+    bash "$INSTALL_DIR/deploy.sh"
+    log "Modules live on this host: $(_psql_q "SELECT string_agg(label, ', ' ORDER BY sort_order, key) FROM public.platform_modules WHERE installed AND active")"
+else
+    info "[DRY RUN] Would restart the Toolserver through deploy.sh"
 fi
 
 # ═══════════════════════════════════════════════════════════════
