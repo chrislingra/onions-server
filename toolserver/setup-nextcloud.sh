@@ -30,6 +30,8 @@
 #      (toolserver-link.sh).
 #   6. The admin name and password apply when Nextcloud installs itself on an empty
 #      volume. On an existing installation the admin it already has stays as it is.
+#   7. No self-registration (GAP-USR-KONTEN-NUR-IM-TOOLSERVER-01): every run disables the
+#      apps that let an account come into being past the Toolserver (close_self_signup).
 # =============================================================================
 
 set -euo pipefail
@@ -298,6 +300,24 @@ wait_for_nextcloud() {
     return 1
 }
 
+# Accounts come from the Toolserver only (operator 2026-09-25: "Nextcloudkonten werden im
+# toolserver angelegt nicht in nextcloud"; GAP-USR-KONTEN-NUR-IM-TOOLSERVER-01). Nextcloud
+# ships without self-registration; these apps would add it -- a visitor's own sign-up
+# (registration) or accounts born from a share (guests). Whoever enabled one is overruled on
+# every run. The Toolserver's user list names any account it did not create.
+readonly SELF_SIGNUP_APPS=(registration guests)
+close_self_signup() {
+    local app enabled
+    enabled="$(docker exec -u www-data nextcloud php occ app:list --enabled 2>/dev/null || true)"
+    for app in "${SELF_SIGNUP_APPS[@]}"; do
+        if grep -q "^  - ${app}:" <<<"$enabled"; then
+            docker exec -u www-data nextcloud php occ app:disable "$app" >/dev/null
+            log_success "App '${app}' disabled."
+        fi
+    done
+    log_success "No self-registration: accounts are created in the Toolserver only."
+}
+
 link_toolserver() {
     ts_connector_register nextcloud "Nextcloud Primary" "https://nextcloud.${DOMAIN}" "$ADMIN_PASSWORD" \
         "{\"base_url\": \"https://nextcloud.${DOMAIN}\", \"username\": \"${ADMIN_USER}\"}"
@@ -321,6 +341,7 @@ main() {
     save_endpoints
     start_stack
     wait_for_nextcloud
+    close_self_signup
     link_toolserver
     echo
     log_success "Nextcloud ready: https://nextcloud.${DOMAIN}   Collabora: https://office.${DOMAIN}"
