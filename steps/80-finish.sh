@@ -10,7 +10,7 @@
 # 2026-09-18: "Step 8 failed" was all he saw). A declined confirmation is not a failure:
 # the user stays, the step stays open. Sourced by install.sh.
 
-STEP_80_TITLE="Finish (remove the bootstrap user after the checks)"
+STEP_80_TITLE="Finish, last step (remove the bootstrap user after the checks)"
 
 # _admin_candidates -> every human user except the bootstrap user: uid >= 1000, a real
 # shell, plus whatever step 3 recorded. The Ubuntu installer's first user counts too --
@@ -77,10 +77,21 @@ step_80_run() {
         return 1
     fi
 
+    # say that this is the end (operator 2026-09-25: "wenn das der letzte Schritt ist, sollte
+    # das auch gesagt werden") -- and what to prove before the only fallback login goes
+    echo
+    log_info "This is the LAST step of the installation. Steps 1-7 are done; after this one"
+    log_info "the installer is finished and the Toolserver runs the host: https://tools.$DOMAIN"
+    log_info "Before you answer: open a SECOND SSH window, log in as one of the admins listed"
+    log_info "above and run 'sudo -v'. Only if that works, remove $user -- it is your fallback login."
     log_warn "Removing $user with its home directory. Its sessions end now."
-    if ! confirm "Remove bootstrap user $user now?" n step80.remove; then
+    # default yes (operator 2026-09-25): every check above has passed at this point -- the
+    # step never gets here while nobody else could administer the host
+    if ! confirm "Last step: remove bootstrap user $user now?" y step80.remove; then
         log_info "$user stays. Step 8 remains open -- run it again when ready."
-        return 0
+        # "left on request", not success: with 0 here the run ended on "All steps done"
+        # while step 8 was still open (operator 2026-09-25: "8 remains open aber all steps done?")
+        return "$PROMPT_RC_BACK"
     fi
     pkill -KILL -u "$user" 2>/dev/null || true
     run userdel -r "$user"
@@ -88,5 +99,5 @@ step_80_run() {
     # the password step 1 may have put into a file goes with the user it belonged to
     rm -f "$STATE_DIR/bootstrap-password.txt"
     step_done 80
-    log_ok "Bootstrap user removed. The Toolserver runs the host from here."
+    log_ok "Bootstrap user removed. The installation is complete -- the Toolserver runs the host from here."
 }

@@ -151,6 +151,11 @@ run_all() {
         fi
         return 1
     done
+    # say "done" only when the markers agree -- a step that returned 0 without its marker is open
+    if n="$(first_open_step)"; then
+        log_warn "Step $((n / 10)) finished without being marked done -- it stays open."
+        return 1
+    fi
     log_ok "All steps done."
 }
 
