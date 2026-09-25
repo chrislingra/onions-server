@@ -33,7 +33,7 @@ INSTALL_ROOT="$ROOT"; INSTANCE_DIR="$TMP/instance"; STATE_DIR="$INSTANCE_DIR/sta
 RUN_STAMP="test"; LOG_FILE="$LOG_DIR/test.log"; SITE_ENV="$INSTANCE_DIR/site.env"; DOMAIN="example.org"
 BOOTSTRAP_USER="manager"; PLATFORM_GROUP="onions"
 mkdir -p "$STATE_DIR" "$LOG_DIR"
-. "$ROOT/lib/help.sh"; . "$ROOT/lib/common.sh"; . "$ROOT/lib/os.sh"; . "$ROOT/lib/checklist.sh"
+. "$ROOT/lib/help.sh"; . "$ROOT/lib/common.sh"; . "$ROOT/lib/os.sh"; . "$ROOT/lib/checklist.sh"; . "$ROOT/lib/order.sh"
 for f in "$ROOT"/steps/*.sh; do . "$f"; done
 
 echo "== distribution detection"
@@ -365,6 +365,142 @@ check "bookworm never takes trixie" _t_repo_no_newer
 detect ubuntu 24.04 noble debian >/dev/null
 check "noble falls back to jammy"  _t_repo jammy jammy
 
+echo "== installation order (bash install.sh <code>)"
+# The Toolserver's mask Environment > Installation > New server gives a code; with it the run
+# fetches its answers and asks nothing (GAP-ENV-NEUER-SERVER-VORGABEN-01). No network here:
+# curl is a shell function in these checks.
+check "a shown code is a code"        is_order_code "abcd-efgh-jkmn-pqrs-tuvw-x234"
+check "a code without dashes too"     is_order_code "ABCDEFGHJKMNPQRSTUVWX234"
+_t_code_short() { ! is_order_code "abcd-efgh-jkmn-pqrs-tuvw-x23"; }
+_t_code_alpha() { ! is_order_code "abcd-efgh-jkmn-pqrs-tuvw-x2l0"; }
+check "23 characters are no code"     _t_code_short
+check "l and 0 are not in the alphabet" _t_code_alpha
+check "the origin is https"           is_order_origin https://tools.onions.one
+_t_origin_http() { ! is_order_origin http://tools.onions.one; }
+_t_origin_path() { ! is_order_origin "https://tools.onions.one/x"; }
+check "plain http is refused"         _t_origin_http
+check "an origin carries no path"     _t_origin_path
+printf 'DOMAIN=lingra.eu\nLANGUAGE=de\nstep10.snapd=y\nEXTRA_ADMINS=anna;bob ssh-ed25519 AAAA bob@x\n' > "$TMP/order.ok"
+check "an order parses"               order_parse "$TMP/order.ok"
+_t_parse() { printf "$1" > "$TMP/order.bad"; ! order_parse "$TMP/order.bad" 2>/dev/null; }
+check "DOMAIN must come first"        _t_parse 'LANGUAGE=de\nDOMAIN=x.de\n'
+check "DOMAIN must be a domain"       _t_parse 'DOMAIN=lingra\n'
+check "a command is no answer"        _t_parse 'DOMAIN=x.de\n$(reboot)\n'
+check "an error page is no order"     _t_parse '<html>\n'
+check "an empty answer is no order"   _t_parse ''
+# the stub answers like the Toolserver: body into -o, status code on stdout
+_order_curl_stub() {
+    curl() {
+        local o=""
+        while (( $# )); do case "$1" in -o) o="$2"; shift 2 ;; -w) shift 2 ;; *) shift ;; esac; done
+        printf 'DOMAIN=lingra.eu\nLANGUAGE=en\nADMIN_USER=chris\nKEY_SOURCE=later\nADMIN_SSH_PUBKEY=\nTRAEFIK_IMAGE=traefik:v3|x&y\nstep10.snapd=n\nHARDEN_MAIL=n\nSMTP_PASSWORD_SET=n\n' > "$o"
+        printf 200
+    }
+}
+_t_order_start() (
+    _order_curl_stub
+    INSTANCE_FILE="$TMP/os/.instance"; mkdir -p "$TMP/os"
+    ONIONS_ORIGIN=https://tools.onions.one order_start abcd-efgh-jkmn-pqrs-tuvw-x234 >/dev/null || exit 1
+    [[ "$(cat "$INSTANCE_FILE")" == "lingra.eu" ]] || exit 2
+    INSTANCE_DIR="$TMP/os/inst"; STATE_DIR="$INSTANCE_DIR/state"; SITE_ENV="$INSTANCE_DIR/site.env"; LOG_FILE="$TMP/os/log"
+    mkdir -p "$STATE_DIR"
+    order_load
+    order_active || exit 3
+    [[ "$(order_answer step10.snapd)" == "n" ]] || exit 4
+    grep -qx 'LANGUAGE=en' "$SITE_ENV" || exit 5
+    grep -qx 'ADMIN_SSH_PUBKEY=-' "$SITE_ENV" || exit 6
+    grep -qxF 'TRAEFIK_IMAGE=traefik:v3|x&y' "$SITE_ENV" || exit 7
+    grep -qE '^(step10|HARDEN|SMTP_PASSWORD_SET)' "$SITE_ENV" && exit 8
+    grep -qx 'CODE=abcdefghjkmnpqrstuvwx234' "$STATE_DIR/order.code" || exit 9
+    exit 0
+)
+check "a code fetches the order, the domain and the checklist follow" _t_order_start
+_t_order_other_domain() (
+    _order_curl_stub
+    INSTANCE_FILE="$TMP/od/.instance"; mkdir -p "$TMP/od"; echo other.de > "$INSTANCE_FILE"
+    ( ONIONS_ORIGIN=https://tools.onions.one order_start abcd-efgh-jkmn-pqrs-tuvw-x234 >/dev/null 2>&1 ) && exit 1
+    [[ "$(cat "$INSTANCE_FILE")" == "other.de" ]]
+)
+check "an order for another domain changes nothing" _t_order_other_domain
+_t_order_no_origin() { ! ( unset ONIONS_ORIGIN; order_start abcd-efgh-jkmn-pqrs-tuvw-x234 >/dev/null 2>&1 ); }
+check "without the Toolserver's address no code works" _t_order_no_origin
+_t_order_no_code() { local rc=0; ( order_start hello >/dev/null 2>&1 ) || rc=$?; [ "$rc" = "2" ]; }
+check "a word is not taken for a code" _t_order_no_code
+_t_order_nothing() { ( order_start ) && [[ -z "${_ORDER_PENDING:-}" ]]; }
+check "without arguments nothing happens" _t_order_nothing
+# confirm and pause answer themselves while an order runs -- and only then
+_t_order_confirm() (
+    INSTANCE_DIR="$TMP/oc"; STATE_DIR="$INSTANCE_DIR/state"; LOG_FILE="$TMP/oc.log"; mkdir -p "$STATE_DIR"
+    printf 'DOMAIN=x.de\nstep10.snapd=n\nstep80.remove=y\n' > "$INSTANCE_DIR/order.env"
+    order_load
+    confirm "Remove snapd?" y step10.snapd < /dev/null >/dev/null && exit 1
+    confirm "Last step?" n step80.remove < /dev/null >/dev/null || exit 2
+    confirm "Not in the order?" y step99.none < /dev/null >/dev/null || exit 3
+    confirm "Not in the order?" n "" < /dev/null >/dev/null && exit 4
+    pause < /dev/null >/dev/null || exit 5
+    date > "$STATE_DIR/order.done"
+    order_active && exit 6
+    exit 0
+)
+check "confirm and pause take the order's answer" _t_order_confirm
+check "the order is never sourced"    bash -c '! grep -rnE "(^|[;&[:space:]])(\.|source)[[:space:]]+\"?\\\$INSTANCE_DIR/order" "$1/install.sh" "$1/lib" "$1/steps"' _ "$ROOT"
+check "the order is fetched before the instance opens" bash -c 'sed -n "/^main()/,/^}/p" "$1/install.sh" | grep -n "order_start\|instance_open" | head -1 | grep -q order_start' _ "$ROOT"
+# step 6 runs the parts the order switched on, in the menu's order, and stays open on a failure
+_t_order_hard() (
+    INSTANCE_DIR="$TMP/oh"; STATE_DIR="$INSTANCE_DIR/state"; LOG_FILE="$TMP/oh.log"; mkdir -p "$STATE_DIR"
+    printf 'DOMAIN=x.de\nHARDEN_MAIL=y\nHARDEN_INTRUSION=n\nHARDEN_UPDATES=y\nHARDEN_RKHUNTER=y\nHARDEN_SCOUT=n\n' > "$INSTANCE_DIR/order.env"
+    order_load
+    calls=""
+    _hard_mail() { calls+="mail "; }; _hard_intrusion() { calls+="intrusion "; }
+    _hard_autoupdates() { calls+="updates "; }; _hard_rkhunter() { calls+="rkhunter "; }; _hard_scout() { calls+="scout "; }
+    _order_hardening >/dev/null || exit 1
+    [[ "$calls" == "mail updates rkhunter " ]] || exit 2
+    step_is_done 60 || exit 3
+    rm -f "$STATE_DIR/60.done"; _hard_autoupdates() { return 1; }
+    _order_hardening >/dev/null 2>&1 && exit 4
+    step_is_done 60 && exit 5
+    exit 0
+)
+check "step 6 runs the parts of the order" _t_order_hard
+# step 3: the further admins of the order, each with sudo; a bad name or key is not fatal
+_t_order_admins() (
+    INSTANCE_DIR="$TMP/oa"; STATE_DIR="$INSTANCE_DIR/state"; LOG_FILE="$TMP/oa.log"; mkdir -p "$STATE_DIR"
+    printf 'DOMAIN=x.de\nEXTRA_ADMINS=anna; bob ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxx bob@pc ;root;carl ssh-foo x\n' > "$INSTANCE_DIR/order.env"
+    order_load
+    got=""; _personal_user() { got+="$1/$2/$4|"; }
+    _order_extra_admins >/dev/null 2>&1
+    [[ "$got" == "anna/later/y|bob/paste/y|carl/later/y|" ]]
+)
+check "step 3 takes the further admins of the order" _t_order_admins
+# done is reported once the handover is done and step 8 ran -- or the order keeps the user
+_t_order_finish() (
+    INSTANCE_DIR="$TMP/of-$1"; STATE_DIR="$INSTANCE_DIR/state"; LOG_FILE="$TMP/of.log"; mkdir -p "$STATE_DIR"
+    printf 'DOMAIN=x.de\nstep80.remove=%s\n' "$1" > "$INSTANCE_DIR/order.env"
+    printf 'CODE=abc\nORIGIN=https://t.x\n' > "$STATE_DIR/order.code"
+    order_load
+    posted=0; curl() { posted=$((posted + 1)); return 0; }
+    order_finish >/dev/null; [[ -f "$STATE_DIR/order.done" || $posted != 0 ]] && exit 1
+    step_done 70; order_finish >/dev/null
+    if [[ "$1" == "y" ]]; then
+        [[ -f "$STATE_DIR/order.done" ]] && exit 2
+        step_done 80; order_finish >/dev/null
+    fi
+    [[ -f "$STATE_DIR/order.done" && $posted == 1 && ! -f "$STATE_DIR/order.code" ]] || exit 3
+    order_active && exit 4
+    exit 0
+)
+check "done after step 8"                        _t_order_finish y
+check "done after step 7 when the order keeps manager" _t_order_finish n
+# a resumed run keeps the relay it built -- the password was fetched once and is gone
+printf 'account relay\nhost smtp.ionos.de\nport 587\nuser a+b@x.de\npassword geheim\n' > "$TMP/msmtprc"
+check "the relay file is for this mailbox"   _msmtprc_is_for smtp.ionos.de a+b@x.de "$TMP/msmtprc"
+_t_ms_other() { ! _msmtprc_is_for smtp.other.de a+b@x.de "$TMP/msmtprc"; }
+_t_ms_user()  { ! _msmtprc_is_for smtp.ionos.de a@x.de "$TMP/msmtprc"; }
+_t_ms_nopw()  { printf 'host smtp.ionos.de\nuser a+b@x.de\npassword\n' > "$TMP/msmtprc2"; ! _msmtprc_is_for smtp.ionos.de a+b@x.de "$TMP/msmtprc2"; }
+check "another server is another relay"      _t_ms_other
+check "another mailbox is another relay"     _t_ms_user
+check "a relay without password is none"     _t_ms_nopw
+
 echo "== config editing"
 printf '# PermitRootLogin prohibit-password\nPasswordAuthentication yes\nSubsystem sftp /usr/lib/openssh/sftp-server\n' > "$TMP/sshd"
 set_config_line "$TMP/sshd" PermitRootLogin no
@@ -379,6 +515,9 @@ printf 'A=1\n#B=2\n' > "$TMP/env"; set_env_line "$TMP/env" A 9; set_env_line "$T
 check "env replace"              grep -qx 'A=9' "$TMP/env"
 check "env uncomment"            grep -qx 'B=3' "$TMP/env"
 check "env append"               grep -qx 'C=4' "$TMP/env"
+set_env_line "$TMP/env" D 'a|b&c\d'; set_env_line "$TMP/env" D 'a|b&c\d'
+check "env value with | & \\ stays as given" grep -qxF 'D=a|b&c\d' "$TMP/env"
+check "env keeps one line per key" [ "$(grep -c '^D=' "$TMP/env")" = "1" ]
 backup_file "$TMP/env" >/dev/null
 check "backup_file copies"       [ -f "$STATE_DIR/backups/test$TMP/env" ]
 

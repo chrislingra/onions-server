@@ -6,13 +6,24 @@
 #       || git clone https://github.com/chrislingra/onions-server.git /opt/onions-server
 #   cd /opt/onions-server && sudo bash install.sh
 #
+# With an installation code (Toolserver: Environment > Installation > New server) the run
+# fetches every answer from the Toolserver that showed the code and goes through without a
+# question -- the two start lines of the mask do that (lib/order.sh):
+#   curl -fsSL https://tools.<domain>/install -o install.sh
+#   bash install.sh <code>
+# An interrupted run continues with a plain "bash install.sh"; the order stays on the host
+# until it is reported done.
+#
 # Two places, kept apart on purpose:
 #   /opt/onions-server   this checkout -- generic code, the same on every host
 #   /opt/<domain>        the instance -- created by the installer on first start; holds the
 #                        answers (site.env, mode 600), step markers, backups and logs.
 #                        The domain is asked once and remembered in .instance (gitignored).
 # Passwords are asked when needed and never written by this installer except into the one
-# config file that needs them (msmtprc) or straight into chpasswd.
+# config file that needs them (msmtprc) or straight into chpasswd. The exceptions are the
+# passwords nobody could type because nobody is there: the bootstrap user's when generated,
+# and every password of a run with an installation order. They go into root-only files in
+# the instance's state directory and are shown at the end of the run.
 # Steps are idempotent: running one twice repairs rather than breaks.
 set -euo pipefail
 
@@ -35,6 +46,8 @@ TOOLSERVER_SOURCE="git@github.com:chrislingra/onions-toolserver.git"
 . "$INSTALL_ROOT/lib/os.sh"
 # shellcheck source=lib/checklist.sh
 . "$INSTALL_ROOT/lib/checklist.sh"
+# shellcheck source=lib/order.sh
+. "$INSTALL_ROOT/lib/order.sh"
 for f in "$INSTALL_ROOT"/steps/*.sh; do
     # shellcheck disable=SC1090
     . "$f"
@@ -194,7 +207,9 @@ main_menu() {
 main() {
     require_root
     os_detect
+    order_start "$@"   # an installation code: fetch the order, fix the domain (lib/order.sh)
     instance_open
+    order_load         # before checklist_load: a fresh order writes its answers into site.env
     checklist_load
     DOMAIN="$(tr -d '[:space:]' < "$INSTANCE_FILE")"   # .instance decides, not a hand-edited site.env
     checklist_save_key DOMAIN "$DOMAIN"
@@ -213,6 +228,21 @@ main() {
     # Whether step 7 can work at all is known before step 1 -- say it now, not after six steps.
     step_is_done 70 || toolserver_precheck
     echo
+    # An installation order runs every open step without the menu and without a question,
+    # then tells the Toolserver it is done. Interrupted, it goes on with a plain
+    # "bash install.sh" -- the order stays on the host until it is finished.
+    if order_active; then
+        log_info "Installation order: every answer comes from the order, no question from here on."
+        local rc=0
+        run_all || rc=$?
+        order_finish
+        step_is_done 70 && next_steps
+        (( rc == 0 )) || [[ -f "$STATE_DIR/order.done" ]] || {
+            log_err "The order is not finished. Fix the cause above, then: bash $INSTALL_ROOT/install.sh"
+            exit 1
+        }
+        exit 0
+    fi
     pause
     # A run that broke off goes on by itself at the break-off point, the menu comes afterwards.
     # "Broke off" = an earlier run left a log here and a step is still open -- also when that

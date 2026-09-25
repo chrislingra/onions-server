@@ -85,6 +85,35 @@ RHEL/Fedora read `dnf install -y git`, on SUSE `zypper install -y git`.
 
 Menu item `a` runs steps 1-8 in order; every step can also be run alone and repeated.
 
+**With an installation code -- no question at all.** In the Toolserver, *Environment >
+Installation > New server* takes every answer this installer would ask, hardening and SSH
+included, one order per server. Saving shows a code and two start lines once:
+
+```bash
+curl -fsSL https://tools.<domain>/install -o install.sh
+bash install.sh <code>
+```
+
+Typed on the new machine as root, the installer fetches the order from the Toolserver that
+served the script (`lib/order.sh`) and runs steps 1-8 without the menu. What an order does
+differently:
+
+1. The answers land in `/opt/<domain>/order.env` (mode 600) and, for the checklist, in
+   `site.env`; the single questions are answered under their help key (`step10.snapd`,
+   `step80.remove`, ...). A question the order does not answer takes its default, said on
+   the screen and in the log.
+2. Every password is generated -- the bootstrap user's, each admin's (expired at the first
+   login), the Traefik dashboard's -- and shown at the very end, next to the Toolserver's
+   login; they also sit in `state/generated-passwords.txt` (root only) until you delete it.
+3. The mail relay password is the one that cannot be generated: it is entered in the mask,
+   kept encrypted with the order and fetched in step 6 exactly once. If that fails, step 6
+   asks for it at the terminal -- the only question an order run can ever ask.
+4. Further admins come from the order (name, optionally a public key; each gets sudo). The
+   sshd hardening of step 3 runs only when the order asks for it AND every admin has a key.
+5. Interrupted, the run continues with a plain `bash install.sh` -- the order stays on the
+   host. When step 7 and step 8 are done (or the order keeps `manager`), the installer
+   reports the order done; the code is dead from then on and the host is interactive again.
+
 **Access to the Toolserver's source (step 7).** This installer is a product path for an
 unknown user (open core: the Toolserver's base is published under AGPL-3.0-only from
 release level 1). The source is fixed (`TOOLSERVER_SOURCE` in `install.sh`, always its
@@ -115,6 +144,7 @@ install.sh              entry point, menu, instance (domain) handling
 lib/common.sh           logging (terminal + log), prompts, backups, config-line editing
 lib/os.sh               the distribution layer: packages, services, firewall, Docker, locale
 lib/checklist.sh        the checklist items, validation, site.env
+lib/order.sh            the installation order: fetch by code, answers, generated passwords, done
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
 toolserver/             setup-toolserver.sh, setup-weaviate.sh, setup-nextcloud.sh, toolserver-link.sh
@@ -124,7 +154,7 @@ tests/selftest.sh       checks without root (syntax, detection, checklist, promp
 .instance               the domain of this host (gitignored)
 src/                    Toolserver checkout for step 7 (gitignored)
 
-/opt/<domain>/          the instance: site.env, state/ (markers, backups), logs/
+/opt/<domain>/          the instance: site.env, order.env (with a code), state/ (markers, backups), logs/
 ```
 
 ## Which distributions it runs on

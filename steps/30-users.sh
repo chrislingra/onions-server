@@ -20,7 +20,9 @@ step_30_run() {
     checklist_require ADMIN_USER KEY_SOURCE
     [[ "$KEY_SOURCE" == "paste" ]] && _require_pasted_key
     _personal_user "$ADMIN_USER" "$KEY_SOURCE" "${ADMIN_SSH_PUBKEY:--}" y
-    while confirm "Add another personal admin?" n step30.another; do
+    # an installation order names the further admins itself; nobody is there to be asked
+    order_active && _order_extra_admins
+    while ! order_active && confirm "Add another personal admin?" n step30.another; do
         local name source pubkey="-"
         while true; do
             ask name "Linux user name" "" ADMIN_USER
@@ -45,9 +47,18 @@ step_30_run() {
         step_done 30
         return 0
     fi
+    # An order may switch the hardening on, but nobody proves a key login during an unattended
+    # run -- so it only goes ahead when EVERY admin has a key; an admin without one would be
+    # locked out the moment password login goes off.
+    if order_active && [[ "$(order_answer step30.keylogin || true)" == "y" ]] && ! _every_admin_with_key; then
+        log_warn "The order asks for sshd hardening, but not every admin has a public key -- hardening skipped."
+        log_warn "  Password login stays on; the Toolserver hardens later (Environment > Server-Config)."
+        step_done 30
+        return 0
+    fi
     echo
     log_warn "Next: root login off, password login off, key only -- for everyone, including $BOOTSTRAP_USER."
-    log_warn "Before you say yes: open a SECOND terminal and log in as a personal admin with the key."
+    order_active || log_warn "Before you say yes: open a SECOND terminal and log in as a personal admin with the key."
     if ! confirm "Did a key login of a personal admin work in a second session?" n step30.keylogin; then
         log_warn "Hardening skipped -- run this step again once the key login is proven."
         step_done 30
@@ -75,6 +86,47 @@ _any_admin_with_key() {
     return 1
 }
 
+# _every_admin_with_key -> every personal admin of this host has an authorized key
+_every_admin_with_key() {
+    local u n=0
+    for u in $(cat "$STATE_DIR/personal_users" 2>/dev/null); do
+        n=$((n + 1))
+        [[ -s "$(getent passwd "$u" 2>/dev/null | cut -d: -f6)/.ssh/authorized_keys" ]] || return 1
+    done
+    (( n > 0 ))
+}
+
+# _order_extra_admins -- the further admins of an installation order: EXTRA_ADMINS, entries
+# separated by ";", each "name" or "name <public key>". Every one gets sudo and a generated
+# password (the order's field says so). A name that is not usable is named and skipped --
+# the Toolserver checked it already, so this only happens with a hand-edited order.env.
+_order_extra_admins() {
+    local list entry name key
+    list="$(order_answer EXTRA_ADMINS || true)"
+    [[ -n "$list" ]] || { log_info "The order names no further admins."; return 0; }
+    IFS=';' read -ra _entries <<< "$list"
+    for entry in "${_entries[@]}"; do
+        entry="${entry#"${entry%%[![:space:]]*}"}"; entry="${entry%"${entry##*[![:space:]]}"}"
+        [[ -n "$entry" ]] || continue
+        name="${entry%% *}"; key=""
+        [[ "$entry" == *" "* ]] && key="${entry#* }"
+        if ! is_personal_user "$name"; then
+            log_warn "Further admin '$name' from the order is not a usable user name -- skipped."
+            continue
+        fi
+        if [[ -n "$key" ]]; then
+            if ! is_pubkey "$key"; then
+                log_warn "The key of '$name' in the order is not a public key -- $name gets a password only."
+                _personal_user "$name" later "-" y
+                continue
+            fi
+            _personal_user "$name" paste "$key" y
+        else
+            _personal_user "$name" later "-" y
+        fi
+    done
+}
+
 # _personal_user NAME SOURCE(later|paste|generate) PUBKEY SUDO(y|n)
 _personal_user() {
     local user="$1" source="$2" pubkey="$3" want_sudo="$4"
@@ -83,7 +135,15 @@ _personal_user() {
     else
         run useradd -m -s /bin/bash "$user"
         log_ok "User $user created."
-        if [[ "$source" == "later" ]] || confirm "Set a password for $user (sudo asks for it; login itself is by key)?" y step30.password; then
+        if order_active; then
+            # nobody there to type one: generated, expired at the first login like the
+            # bootstrap user's, shown at the end of the run
+            local gpw; gpw="$(order_new_password)"
+            printf '%s:%s\n' "$user" "$gpw" | chpasswd
+            chage -d 0 "$user"
+            order_password_note "Admin (sudo)" "$user" "$gpw  (expires at first login)"
+            unset gpw
+        elif [[ "$source" == "later" ]] || confirm "Set a password for $user (sudo asks for it; login itself is by key)?" y step30.password; then
             local pw; ask_secret pw "Password for $user" step30.password
             printf '%s:%s\n' "$user" "$pw" | chpasswd; unset pw
         fi

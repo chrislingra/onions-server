@@ -82,8 +82,10 @@ step_80_run() {
     echo
     log_info "This is the LAST step of the installation. Steps 1-7 are done; after this one"
     log_info "the installer is finished and the Toolserver runs the host: https://tools.$DOMAIN"
-    log_info "Before you answer: open a SECOND SSH window, log in as one of the admins listed"
-    log_info "above and run 'sudo -v'. Only if that works, remove $user -- it is your fallback login."
+    if ! order_active; then
+        log_info "Before you answer: open a SECOND SSH window, log in as one of the admins listed"
+        log_info "above and run 'sudo -v'. Only if that works, remove $user -- it is your fallback login."
+    fi
     log_warn "Removing $user with its home directory. Its sessions end now."
     # default yes (operator 2026-09-25): every check above has passed at this point -- the
     # step never gets here while nobody else could administer the host
@@ -96,8 +98,10 @@ step_80_run() {
     pkill -KILL -u "$user" 2>/dev/null || true
     run userdel -r "$user"
     rm -f "/etc/sudoers.d/$user"
-    # the password step 1 may have put into a file goes with the user it belonged to
+    # the password step 1 may have put into a file goes with the user it belonged to -- also
+    # its line among the passwords an installation order generated
     rm -f "$STATE_DIR/bootstrap-password.txt"
+    [[ -f "$STATE_DIR/generated-passwords.txt" ]] && sed -i '/^Bootstrap user /d' "$STATE_DIR/generated-passwords.txt"
     step_done 80
     log_ok "Bootstrap user removed. The installation is complete -- the Toolserver runs the host from here."
 }
@@ -129,6 +133,9 @@ next_steps() {
     echo "   Copy: select the password with the mouse (PuTTY copies on select; Windows Terminal:"
     echo "         Ctrl+Shift+C). Never Ctrl+C -- in a terminal that stops the running program."
     echo
+    # a run with an installation order made up every other password itself -- they belong
+    # here too, at the end, where they are needed
+    order_passwords_show
     if step_is_done 80; then
         echo "  This installer has nothing more to do on this host."
     else

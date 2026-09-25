@@ -28,7 +28,13 @@ step_50_run() {
         && ! confirm "Traefik is already configured. Rewrite traefik.yml and docker-compose.yml?" n step50.rewrite; then
         log_ok "Kept the existing configuration."
     else
-        ask_secret pw "Password for the Traefik dashboard (user $ADMIN_USER)" step50.rewrite
+        if order_active; then
+            # an installation order has nobody to type it: generated, shown at the end
+            pw="$(order_new_password)"
+            order_password_note "Traefik dashboard (traefik.$DOMAIN)" "$ADMIN_USER" "$pw"
+        else
+            ask_secret pw "Password for the Traefik dashboard (user $ADMIN_USER)" step50.rewrite
+        fi
         hash="$(openssl passwd -apr1 "$pw")"; unset pw
         hash="${hash//\$/\$\$}"   # compose interpolation: literal $ is $$
         backup_file "$dir/traefik.yml"; backup_file "$dir/docker-compose.yml"

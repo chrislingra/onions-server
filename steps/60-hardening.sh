@@ -9,6 +9,7 @@ STEP_60_TITLE="Hardening (mail relay, attack blocking, automatic security update
 # updates. rkhunter and Docker Scout stay available as extras, not in the set.
 step_60_run() {
     heading "$STEP_60_TITLE"
+    if order_active; then _order_hardening; return; fi
     # The name of the blocking tool is not written into the menu: on SUSE it is fail2ban,
     # because CrowdSec has no packages there at all (lib/os.sh, intrusion_tool).
     local pick tool; tool="$(intrusion_tool_name)"
@@ -33,6 +34,32 @@ step_60_run() {
     esac
     if (( rc != 0 )); then
         log_err "Hardening is INCOMPLETE -- the part above did not finish. The step stays open on purpose; fix the cause and run it again."
+        return 1
+    fi
+    step_done 60
+}
+
+# _order_hardening -- the parts an installation order switched on (HARDEN_MAIL,
+# HARDEN_INTRUSION, HARDEN_UPDATES, HARDEN_RKHUNTER, HARDEN_SCOUT; the Toolserver's mask
+# Environment > Installation > New server, tab Hardening). The same rule as the menu's: every
+# part reports for itself, one failing part does not swallow the others, and a hardening
+# that half ran leaves the step open. The relay comes first -- the rkhunter report needs it.
+_order_hardening() {
+    local rc=0 any=0 part
+    for part in MAIL INTRUSION UPDATES RKHUNTER SCOUT; do
+        [[ "$(order_answer "HARDEN_$part" || true)" == "y" ]] || continue
+        any=1
+        case "$part" in
+            MAIL)      _hard_mail        || rc=1 ;;
+            INTRUSION) _hard_intrusion   || rc=1 ;;
+            UPDATES)   _hard_autoupdates || rc=1 ;;
+            RKHUNTER)  _hard_rkhunter    || rc=1 ;;
+            SCOUT)     _hard_scout       || rc=1 ;;
+        esac
+    done
+    (( any )) || log_warn "The order switches every part of the hardening off -- nothing done here."
+    if (( rc != 0 )); then
+        log_err "Hardening is INCOMPLETE -- the part above did not finish. The step stays open on purpose; fix the cause and start the installer again."
         return 1
     fi
     step_done 60
@@ -93,7 +120,24 @@ _hard_mail() {
     checklist_require NOTIFICATION_EMAIL SENDER_EMAIL SMTP_SERVER SMTP_PORT SMTP_USER
     pkg_install msmtp msmtp-mta
     local pw
-    ask_secret pw "Password of $SMTP_USER at $SMTP_SERVER" SMTP_USER
+    if order_active && _msmtprc_is_for "$SMTP_SERVER" "$SMTP_USER"; then
+        # a resumed order run: the relay password was fetched once and is gone at the
+        # Toolserver -- the relay it built is kept instead of asking for it again
+        log_ok "Relay for $SMTP_USER at $SMTP_SERVER is already configured -- kept."
+        _system_mail_wrapper
+        return 0
+    fi
+    if order_active; then
+        if pw="$(order_smtp_password)"; then
+            log_ok "Relay password fetched from the installation order (once -- it is deleted there now)."
+        else
+            log_warn "The order has no relay password to fetch (none given, already fetched, or the Toolserver"
+            log_warn "  is not reachable) -- it is asked here. This is the one question of an order run."
+            ask_secret pw "Password of $SMTP_USER at $SMTP_SERVER" SMTP_USER
+        fi
+    else
+        ask_secret pw "Password of $SMTP_USER at $SMTP_SERVER" SMTP_USER
+    fi
     backup_file /etc/msmtprc
     umask 077
     cat > /etc/msmtprc <<EOF
@@ -117,6 +161,20 @@ EOF
     unset pw; umask 022
     chmod 600 /etc/msmtprc; chown root:root /etc/msmtprc
     [[ -f /etc/ssl/certs/ca-certificates.crt ]] || sed -i 's|/etc/ssl/certs/ca-certificates.crt|/etc/pki/tls/certs/ca-bundle.crt|' /etc/msmtprc
+    _system_mail_wrapper
+    log_ok "Relay configured; wrapper /usr/local/bin/system-mail."
+    if confirm "Send a test mail to $NOTIFICATION_EMAIL?" y step60.testmail; then
+        if printf 'Test mail from %s (onions-server step 60).\n' "$(hostname)" | system-mail -s "Relay test" "$NOTIFICATION_EMAIL"; then
+            log_ok "Test mail handed to the relay -- check the mailbox."
+        else
+            log_warn "Sending failed -- see /var/log/msmtp.log"
+        fi
+    fi
+}
+
+# _system_mail_wrapper -- /usr/local/bin/system-mail, the one way every script of the host
+# mails (rkhunter, the bootstrap password, the Toolserver's notices).
+_system_mail_wrapper() {
     cat > /usr/local/bin/system-mail <<'EOF'
 #!/usr/bin/env bash
 # system-mail -s "Subject" recipient  <  body   -- sends through the msmtp relay
@@ -128,14 +186,16 @@ prefix="[$(hostname -f 2>/dev/null || hostname)]"
 { printf 'To: %s\nSubject: %s\n\n' "$to" "$subject"; cat; } | /usr/bin/msmtp -a default "$to"
 EOF
     chmod 755 /usr/local/bin/system-mail
-    log_ok "Relay configured; wrapper /usr/local/bin/system-mail."
-    if confirm "Send a test mail to $NOTIFICATION_EMAIL?" y step60.testmail; then
-        if printf 'Test mail from %s (onions-server step 60).\n' "$(hostname)" | system-mail -s "Relay test" "$NOTIFICATION_EMAIL"; then
-            log_ok "Test mail handed to the relay -- check the mailbox."
-        else
-            log_warn "Sending failed -- see /var/log/msmtp.log"
-        fi
-    fi
+}
+
+# _msmtprc_is_for SERVER USER [FILE] -> the relay file exists, carries a password and points
+# at exactly this server and mailbox. Nothing of the password is read out or printed.
+_msmtprc_is_for() {
+    local server="$1" user="$2" file="${3:-/etc/msmtprc}"
+    [[ -s "$file" ]] || return 1
+    [[ "$(awk '$1 == "host" {print $2; exit}' "$file")" == "$server" ]] || return 1
+    [[ "$(awk '$1 == "user" {print $2; exit}' "$file")" == "$user" ]] || return 1
+    awk '$1 == "password" && $2 != "" {f = 1} END {exit !f}' "$file"
 }
 
 # Blocking attackers: CrowdSec where it exists, fail2ban on SUSE where it does not. The

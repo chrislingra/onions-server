@@ -95,9 +95,24 @@ _prompt_headline() {
 # confirm "Question?" [y|n] [helpkey] -> 0 for yes, 1 for no, and it never returns on "back"
 # inside a step: _prompt_back leaves the step there. This matters because confirm is nearly
 # always used in an "if", where a return code would be read as "no" -- a silent wrong answer.
+#
+# With an installation order (lib/order.sh) nobody sits at the terminal: the answer is the
+# order's under the help key, and a question the order does not answer takes its default --
+# both said on the screen and in the log, so the run reads like a dialogue afterwards.
 confirm() {
     local question="$1" default="${2:-n}" helpkey="${3:-}" reply dflt=2
     [[ "$default" == "y" ]] && dflt=1
+    if declare -F order_active >/dev/null && order_active; then
+        reply="$(order_answer "$helpkey" || true)"
+        case "$reply" in
+            y|n) echo "$question -> $([[ $reply == y ]] && echo yes || echo no) (installation order)" ;;
+            *)   reply="$default"
+                 echo "$question -> $([[ $reply == y ]] && echo yes || echo no) (default; the order does not answer it)" ;;
+        esac
+        _log_line "INFO" "order: $question -> $reply"
+        [[ "$reply" == "y" ]]
+        return
+    fi
     _prompt_headline "$question"
     printf '  %2d) %s\n' 1 "Yes"
     printf '  %2d) %s\n' 2 "No"
@@ -202,7 +217,11 @@ choose() {
     done
 }
 
-pause() { read -r -p "Press [Enter] to continue... " _; }
+# With an installation order nobody is there to press Enter -- the run goes on.
+pause() {
+    if declare -F order_active >/dev/null && order_active; then echo; return 0; fi
+    read -r -p "Press [Enter] to continue... " _
+}
 
 # --- files ---------------------------------------------------------------------------------
 # backup_file /etc/x -> copies it to $STATE_DIR/backups/<stamp>/etc/x before we touch it.
@@ -226,15 +245,25 @@ set_config_line() {
     fi
 }
 
-# set_env_line FILE KEY VALUE -> "KEY=VALUE" style files.
+# set_env_line FILE KEY VALUE -> "KEY=VALUE" style files. Every active or commented line of
+# KEY becomes KEY=VALUE, appended when there is none. Written line by line in bash, not with
+# sed: a \, & or | in the value (an image tag, a mailbox name from an installation order)
+# is sed syntax in a replacement and would have written something else than was given. The
+# file keeps its mode and owner -- it is rewritten in place, not replaced.
 set_env_line() {
-    local file="$1" key="$2" value="$3"
+    local file="$1" key="$2" value="$3" line found=0 tmp
     touch "$file"
-    if grep -Eq "^[[:space:]]*#?[[:space:]]*${key}=" "$file"; then
-        sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}=.*$|${key}=${value}|" "$file"
-    else
-        printf '%s=%s\n' "$key" "$value" >> "$file"
-    fi
+    tmp="$(mktemp "$file.XXXXXX")"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*#?[[:space:]]*${key}= ]]; then
+            printf '%s=%s\n' "$key" "$value"; found=1
+        else
+            printf '%s\n' "$line"
+        fi
+    done < "$file" > "$tmp"
+    (( found )) || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
 }
 
 # --- step bookkeeping ---------------------------------------------------------------------

@@ -103,9 +103,15 @@ _bootstrap_user() {
         local pw="" mode
         echo
         echo "The first password of $user. It expires immediately: the first login changes it."
-        pick_option mode "How do you want to get it?" self \
-            "self=I type it myself now (nothing to copy afterwards);generate=Generate one and put it into a root-only file" \
-            step10.password
+        # an installation order has nobody to type it: generated, and shown at the end
+        if order_active; then
+            mode=generate
+            echo "How do you want to get it? -> generated (installation order)"
+        else
+            pick_option mode "How do you want to get it?" self \
+                "self=I type it myself now (nothing to copy afterwards);generate=Generate one and put it into a root-only file" \
+                step10.password
+        fi
         if [[ "$mode" == "self" ]]; then
             while true; do
                 ask_secret pw "Password for $user" step10.password
@@ -119,6 +125,7 @@ _bootstrap_user() {
         printf '%s:%s\n' "$user" "$pw" | chpasswd
         chage -d 0 "$user"    # expired: must be changed at the first login
         [[ "$mode" == "generate" ]] && _bootstrap_password_out "$user" "$pw"
+        order_active && order_password_note "Bootstrap user (removed in step 8)" "$user" "$pw  (expires at first login)"
         unset pw
         _log_line "INFO" "bootstrap user $user created ($mode), password never written to this log"
         pause
