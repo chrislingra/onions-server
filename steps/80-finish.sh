@@ -100,12 +100,13 @@ step_80_run() {
     rm -f "$STATE_DIR/bootstrap-password.txt"
     step_done 80
     log_ok "Bootstrap user removed. The installation is complete -- the Toolserver runs the host from here."
-    next_steps
 }
 
 # next_steps -- what comes after the installer (operator 2026-09-25: "was auch fehlt, wie es
-# weitergeht! einloggen im Browser. mit welchem user? restliches setup via gui"). Printed at
-# the end of step 8 and under the menu once every step is done. Menu places as they stand in
+# weitergeht! einloggen im Browser. mit welchem user? restliches setup via gui"), with the
+# password shown where it is needed: at the very end of every run once step 7 is done, so it
+# is the last thing on the screen ("das kennwort muss angezeigt werden wenn es gebraucht wird.
+# zum schluss"). install.sh calls it; menu entry n repeats it. Menu places as they stand in
 # public.menu_nodes (measured 2026-09-25), not from memory.
 next_steps() {
     local pwfile="/opt/toolserver/secrets/admin_password"
@@ -124,6 +125,13 @@ next_steps() {
     echo "              Environment > Installation   further services (Nextcloud, Weaviate, Open WebUI, ...)"
     echo "              Environment > Server-Config  running services, backups, logs"
     echo
-    echo "  This installer has nothing more to do on this host."
+    echo "   Copy: select the password with the mouse (PuTTY copies on select; Windows Terminal:"
+    echo "         Ctrl+Shift+C). Never Ctrl+C -- in a terminal that stops the running program."
+    echo
+    if step_is_done 80; then
+        echo "  This installer has nothing more to do on this host."
+    else
+        echo "  Step 8 (last step) is still open -- the installer continues there on its next start."
+    fi
     echo
 }

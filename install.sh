@@ -169,8 +169,8 @@ main_menu() {
             echo "   a) Continue: every open step, from step $((open / 10)) on"
         else
             echo "   a) All steps are done"
-            echo "   n) Next: how to continue in the browser (login, rest of the setup)"
         fi
+        step_is_done 70 && echo "   n) Next: how to continue in the browser (login, password, rest of the setup)"
         echo "   v) Show checklist values"
         echo "   h) Help -- what the steps do and in which order"
         echo "   q) Quit"
@@ -180,8 +180,8 @@ main_menu() {
         else                      read -r -p "${PROMPT_INDENT}Choice: " reply; fi
         case "$reply" in
             0) checklist_review; pause ;;
-            [1-8]) run_step "$((reply * 10))" || true; pause ;;
-            a|A) run_all || true; pause ;;
+            [1-8]) run_step "$((reply * 10))" || true; step_is_done 70 && next_steps; pause ;;
+            a|A) run_all || true; step_is_done 70 && next_steps; pause ;;
             n|N) next_steps; pause ;;
             v|V) checklist_show; pause ;;
             h|H|\?) help_show menu "Main menu"; pause ;;
@@ -222,6 +222,7 @@ main() {
     if open="$(first_open_step)" && [[ -n "$earlier" ]]; then
         log_info "Continuing at step $((open / 10)), where the last run stopped."
         run_all || true
+        step_is_done 70 && next_steps
         pause
     fi
     main_menu
