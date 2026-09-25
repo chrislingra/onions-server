@@ -121,8 +121,9 @@ next_steps() {
     else
         echo "              password: the one step 7 printed (file $pwfile)"
     fi
+    echo "              The same login is Nextcloud's admin: https://nextcloud.$DOMAIN"
     echo "   3) The rest of the setup is done there, not here:"
-    echo "              Environment > Installation   further services (Nextcloud, Weaviate, Open WebUI, ...)"
+    echo "              Environment > Installation   further services (Open WebUI, Docserver, ...)"
     echo "              Environment > Server-Config  running services, backups, logs"
     echo
     echo "   Copy: select the password with the mouse (PuTTY copies on select; Windows Terminal:"

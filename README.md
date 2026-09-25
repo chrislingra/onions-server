@@ -33,8 +33,13 @@ Design decisions (recorded in the Toolserver's `GAP-ENV-SYSTEM-NEUAUFBAU-01`, K1
    into `/opt/<domain>/` and runs it from there. The Toolserver repository carries no setup
    script (operator 2026-09-18: `scripts/setup-*.sh` must not exist there -- every setup script
    lives in `/opt/<domain>`); this one travels here because it runs before a Toolserver exists.
-   From then on the Toolserver manages the host (Environment > Server-Config > Services) and
-   maintains that copy. This repository never installs a service.
+   The same step sets up the two services of full operation, Weaviate and Nextcloud, with
+   their setup scripts from `toolserver/` (operator 2026-09-25); Nextcloud's admin is the
+   platform's one superadmin `admin` with the Toolserver's generated password. Each script
+   registers its connector in the Toolserver and marks itself in its catalogue. From then
+   on the Toolserver manages the host (Environment > Server-Config > Services), sets up
+   further services from Environment > Installation and maintains the copies in
+   `/opt/<domain>/`.
 7. **Checklist as data**: `checklist/PREPARATION.md` lists what to have ready; `site.env`
    holds the answers. **No password lives in this repository or in `site.env`** -- they
    are asked hidden at the moment of use.
@@ -100,7 +105,7 @@ use it, never prompts, and shows git's reason if it fails.
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
 | 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
-| 7 Toolserver | probes `TOOLSERVER_SOURCE` without prompting, clones it, `toolserver/setup-toolserver.sh` placed into `/opt/<domain>/` and run with `--skip-docker --skip-traefik` (first-login password generated, printed once), then this host's own Verwalter (`toolserver/verwalter.py` to `/opt/<domain>/`, systemd unit `onions-verwalter`) that carries out the interface's jobs, handover |
+| 7 Toolserver, Weaviate, Nextcloud | checks the DNS records of `tools.`, `nextcloud.`, `office.` first; probes `TOOLSERVER_SOURCE` without prompting, clones it; places the setup scripts of `toolserver/` into `/opt/<domain>/` and runs `setup-toolserver.sh` with `--skip-docker --skip-traefik` (superadmin password generated); this host's own Verwalter (`toolserver/verwalter.py`, systemd unit `onions-verwalter`) that carries out the interface's jobs; `setup-weaviate.sh` and `setup-nextcloud.sh`, each registering its connector; handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
 ## Layout
@@ -112,7 +117,8 @@ lib/os.sh               the distribution layer: packages, services, firewall, Do
 lib/checklist.sh        the checklist items, validation, site.env
 steps/NN-name.sh        one step each, idempotent, sourced by install.sh
 templates/              Traefik static config and compose file with @PLACEHOLDERS@
-toolserver/             setup-toolserver.sh -- the Toolserver's setup, placed into /opt/<domain>/ by step 7
+toolserver/             setup-toolserver.sh, setup-weaviate.sh, setup-nextcloud.sh, toolserver-link.sh
+                        (what they share), verwalter.py -- placed into /opt/<domain>/ by step 7
 checklist/PREPARATION.md what to have ready
 tests/selftest.sh       checks without root (syntax, detection, checklist, prompts, ...)
 .instance               the domain of this host (gitignored)

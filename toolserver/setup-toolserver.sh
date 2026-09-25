@@ -579,6 +579,25 @@ SQL
         warn "dbmigrate.sh not found — DB left at baseline only."
         warn "Run 'bash dbmigrate.sh apply --to alle' once the runner is present."
     fi
+
+    # 7f. The catalogue of THIS host, measured (GAP-ENV-INSTALL-VOLLBETRIEB-01). The seed is a
+    #     copy of the Onions server's catalogue, installed_at included, so a fresh host listed
+    #     ten services under Environment > Installation > Updates that did not exist on it
+    #     (lingra.eu, 2026-09-24). A component counts as installed when its compose file lies
+    #     in its directory; the date of one already marked stays. Every run, idempotent. The
+    #     setup scripts of the services mark themselves once they ran (toolserver-link.sh).
+    DA=(); FEHLT=()
+    while IFS='|' read -r k dir file; do
+        [ -n "$k" ] || continue
+        if [ -n "$dir" ] && [ -n "$file" ] && [ -f "$dir/$file" ]; then DA+=("'$k'"); else FEHLT+=("'$k'"); fi
+    done < <(_psql_q "SELECT key, service_dir, compose_file FROM public.platform_components")
+    _psql <<SQL
+UPDATE public.platform_components SET installed_at = COALESCE(installed_at, now()), updated_at = now()
+ WHERE key IN ($(IFS=,; echo "${DA[*]:-''}")) AND installed_at IS NULL;
+UPDATE public.platform_components SET installed_at = NULL, updated_at = now()
+ WHERE key IN ($(IFS=,; echo "${FEHLT[*]:-''}")) AND installed_at IS NOT NULL;
+SQL
+    log "Catalogue measured: ${#DA[@]} component(s) present on this host, ${#FEHLT[@]} not"
 else
     info "[DRY RUN] Would initialise database schema and apply pending patches"
 fi
@@ -662,7 +681,7 @@ SQL
         if [ "$HAD_PW" = "t" ]; then
             log "Superadmin 'admin' already has a personal password (this one, or one you set) -- unchanged."
         else
-            log "Superadmin 'admin' ready -- login name admin, password ${ADMIN_PASSWORD} (also in $SECRETS_DIR/admin_password). Change it under Admin > Users."
+            log "Superadmin 'admin' ready -- login name admin, password ${ADMIN_PASSWORD} (also in $SECRETS_DIR/admin_password). Change it under Admin > User > User Management > All Users."
         fi
     else
         warn "Could not hash the generated password inside the container after 2 minutes of retries -- 'admin' has no personal password yet."
@@ -692,7 +711,7 @@ if [ "$DRY_RUN" = true ]; then
 elif [ "$HAD_PW" = "t" ]; then
     echo "  Login:         admin, with the password already set on this instance"
 elif [ "$ADMIN_LOGIN_SET" = true ]; then
-    echo "  Login:         admin / ${ADMIN_PASSWORD}   (change it under Admin > Users; kept in $SECRETS_DIR/admin_password)"
+    echo "  Login:         admin / ${ADMIN_PASSWORD}   (change it under Admin > User > User Management > All Users; kept in $SECRETS_DIR/admin_password)"
 else
     echo "  Login:         admin has NO password yet -- the generated password could not be set (see warning above)"
 fi
@@ -706,8 +725,8 @@ echo ""
 echo "  Next steps:"
 echo "    1. Verify: curl -s https://tools.${DOMAIN}/health"
 echo "    2. Login:  https://tools.${DOMAIN}/menu"
-echo "    3. Configure connectors (IONOS, Nextcloud) in Admin → Connectors"
-echo "    4. Create your first Directory Pipe in Knowledge → Pipes"
+echo "    3. Further services: Environment > Installation > New installation -- their setup"
+echo "       scripts register their connectors (Admin > Masterdata > Connectors > All Connectors)"
 echo ""
 echo "  Logs:    docker logs toolserver"
 echo "  Restart: cd $INSTALL_DIR && docker compose -f docker-compose.toolserver.yml up -d --force-recreate"

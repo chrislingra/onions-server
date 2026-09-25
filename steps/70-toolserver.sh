@@ -21,13 +21,34 @@
 # if that fails, shows git's reason and stops. The deploy-key apparatus of 2026-09-17
 # (one key per repository, registration through the GitHub API with a token) is gone --
 # it was a crutch of the closed phase, not a product path.
+#
+# Since 2026-09-25 (GAP-ENV-INSTALL-VOLLBETRIEB-01) the step also sets up the services of
+# full operation, Weaviate and Nextcloud, with their own setup scripts from toolserver/.
+# Nextcloud's admin is the platform's one superadmin: login admin, the password the
+# Toolserver generated (the installer shows it at the end). Each service script registers
+# its connector in the Toolserver and marks itself installed in its catalogue.
 
-STEP_70_TITLE="Toolserver (pull from Git, run its setup, hand over)"
+STEP_70_TITLE="Toolserver with Weaviate and Nextcloud (set up, hand over)"
+
+# The setup scripts that travel with this repository and live in /opt/<domain>/ afterwards,
+# where the Verwalter finds them (Environment > Installation, job "setup"). toolserver-link.sh
+# is no setup script: the service scripts source it to tell the Toolserver they exist.
+SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh toolserver-link.sh)
+# Full operation (operator 2026-09-25: "alle uebrigen container die wir brauchen fuer den
+# Vollbetrieb bereits waehrend der terminalinstallation"; Weaviate and Nextcloud are the
+# mandatory ones, the rest follows from the interface). Order matters: Weaviate needs no
+# DNS name, Nextcloud does.
+SERVICE_SCRIPTS=(setup-weaviate.sh setup-nextcloud.sh)
+# Every name this step publishes through Traefik.
+STEP_70_NAMES=(tools nextcloud office)
 
 step_70_run() {
     heading "$STEP_70_TITLE"
     docker_ok || die "Docker is missing -- run the Docker step first."
     docker ps --format '{{.Names}}' | grep -qx traefik || die "Traefik is not running -- run the Traefik step first."
+    local names=() n
+    for n in "${STEP_70_NAMES[@]}"; do names+=("$n.$DOMAIN"); done
+    _dns_check "${names[@]}" || return 1
     command -v git >/dev/null || pkg_install git
 
     local src="$INSTALL_ROOT/src/onions-toolserver"
@@ -42,18 +63,52 @@ step_70_run() {
     fi
     log_ok "Toolserver source at $(cd "$src" && git describe --tags --always)."
 
-    local setup="$INSTANCE_DIR/setup-toolserver.sh"
-    [[ -f "$INSTALL_ROOT/toolserver/setup-toolserver.sh" ]] || die "toolserver/setup-toolserver.sh is missing in $INSTALL_ROOT."
-    run install -m 755 "$INSTALL_ROOT/toolserver/setup-toolserver.sh" "$setup"
-    log_ok "Setup script placed at $setup (the Toolserver lists and maintains it there)."
+    local f
+    for f in "${SETUP_SCRIPTS[@]}"; do
+        [[ -f "$INSTALL_ROOT/toolserver/$f" ]] || die "toolserver/$f is missing in $INSTALL_ROOT."
+        run install -m 755 "$INSTALL_ROOT/toolserver/$f" "$INSTANCE_DIR/$f"
+    done
+    log_ok "Setup scripts placed in $INSTANCE_DIR (the Toolserver lists and maintains them there)."
     log_info "Handing over to the Toolserver's setup (Docker and Traefik are done here)."
-    (cd "$src" && run bash "$setup" --domain "$DOMAIN" --source "$src" --skip-docker --skip-traefik)
+    (cd "$src" && run bash "$INSTANCE_DIR/setup-toolserver.sh" --domain "$DOMAIN" --source "$src" --skip-docker --skip-traefik)
     _verwalter_einrichten
+    local svc
+    for f in "${SERVICE_SCRIPTS[@]}"; do
+        svc="${f#setup-}"; svc="${svc%.sh}"
+        log_info "Setting up $svc ($INSTANCE_DIR/$f)..."
+        run bash "$INSTANCE_DIR/$f" || die "$f failed -- see above. The next start continues with step 7."
+    done
     step_done 70
     echo
     log_ok "Handover complete. The Toolserver now owns the host: https://tools.$DOMAIN"
     log_info "Everything beyond this point (services, backups, updates) is managed there:"
     log_info "  Environment > Server-Config > Services"
+}
+
+# _dns_check <name>... -- every name this step publishes must resolve BEFORE Traefik asks
+# Let's Encrypt for it. A name without a record makes Traefik retry without end until Let's
+# Encrypt pauses the whole account (Onions server 2026-08: weaviate.<domain>, 2117 failed
+# attempts). So: no record = stop here, before anything is installed. A record pointing at
+# an address this host does not carry is only named -- behind NAT or a load balancer that is
+# right, and the host cannot learn its public address without asking a stranger.
+_dns_check() {
+    local name addr local_ips missing=()
+    local_ips=" $(hostname -I 2>/dev/null) "
+    for name in "$@"; do
+        addr="$(getent ahostsv4 "$name" 2>/dev/null | awk 'NR == 1 {print $1}')"
+        if [[ -z "$addr" ]]; then
+            missing+=("$name")
+        elif [[ "$local_ips" == *" $addr "* ]]; then
+            log_ok "DNS: $name -> $addr (this host)."
+        else
+            log_warn "DNS: $name -> $addr, not an address of this host (right behind NAT, otherwise fix the record)."
+        fi
+    done
+    (( ${#missing[@]} == 0 )) && return 0
+    log_err "No DNS record for: ${missing[*]}"
+    log_info "  Create an A record for each, pointing at this server's public address, then start"
+    log_info "  the installer again -- it continues with step 7."
+    return 1
 }
 
 # _verwalter_einrichten -- every installation gets its own Verwalter (operator 2026-09-25:

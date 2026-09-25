@@ -223,6 +223,22 @@ _t_verwalter() {
         && grep -q 'ExecStart=/usr/bin/python3 \$ziel' "$ROOT/steps/70-toolserver.sh"
 }
 check "step 7 installs this host's own Verwalter" _t_verwalter
+# full operation from the terminal (operator 2026-09-25): Weaviate and Nextcloud in step 7
+_t_services() {
+    local f
+    for f in setup-weaviate.sh setup-nextcloud.sh toolserver-link.sh; do [[ -s "$ROOT/toolserver/$f" ]] || return 1; done
+    [[ " ${SERVICE_SCRIPTS[*]} " == *" setup-weaviate.sh "* && " ${SERVICE_SCRIPTS[*]} " == *" setup-nextcloud.sh "* ]] \
+        && [[ " ${SETUP_SCRIPTS[*]} " == *" toolserver-link.sh "* ]]
+}
+check "step 7 sets up Weaviate and Nextcloud" _t_services
+# the Verwalter runs setup scripts as root without a terminal: no question, no fixed password,
+# no user that only exists on the Onions server
+_t_unattended() { ! grep -nE '^[^#]*(read -p|read -r -p|dont4get|SUDO_USER:-chris|chown -R manager)' "$ROOT"/toolserver/setup-*.sh; }
+check "setup scripts run unattended, without fixed passwords" _t_unattended
+_t_dns_missing() { ! _dns_check "no-record.invalid" >/dev/null 2>&1; }
+check "step 7 stops on a name without a DNS record" _t_dns_missing
+_t_link_without_ts() { bash -c '. "$0/toolserver/toolserver-link.sh"; docker() { return 1; }; ts_connector_register weaviate W http://w:8080 s && ts_catalogue_installed weaviate' "$ROOT"; }
+check "a service without a Toolserver is no error" _t_link_without_ts
 _t_no_keys() { ! grep -qE '^[[:space:]]*(run[[:space:]]+)?ssh-keygen|api.github.com|ask_secret|IdentitiesOnly' "$ROOT/steps/70-toolserver.sh"; }
 check "step 7 carries no key apparatus" _t_no_keys
 # ask prints its question block first (structured, one line per answer), so the value is the
@@ -407,6 +423,17 @@ check "tenants exist before the seed"  bash -c '
     t=$(grep -n "INSERT INTO public.tenants" "$1" | head -1 | cut -d: -f1)
     s=$(grep -n "schema_seed.sql (one transaction)" "$1" | head -1 | cut -d: -f1)
     [ -n "$t" ] && [ -n "$s" ] && [ "$t" -lt "$s" ]' _ "$_st"
+# 7f measures the catalogue on this host: a compose file present = installed, absent = not
+# (the seed carried the Onions server's installed_at to every fresh host)
+_t_catalogue() {
+    local d="$TMP/cat"; mkdir -p "$d/a"; : > "$d/a/c.yml"
+    sed -n '/# 7f\. The catalogue/,/log "Catalogue measured/p' "$_st" > "$d/7f.sh"
+    [[ -s "$d/7f.sh" ]] || return 1
+    D="$d" bash -c '_psql_q() { printf "a|%s/a|c.yml\nb|%s/b|c.yml\n" "$D" "$D"; }
+                    _psql() { cat > "$D/sql"; }; log() { :; }; . "$D/7f.sh"' || return 1
+    grep -q "key IN ('a') AND installed_at IS NULL" "$d/sql" && grep -q "key IN ('b') AND installed_at IS NOT NULL" "$d/sql"
+}
+check "7f marks what is on the host, and only that" _t_catalogue
 
 echo
 echo "$PASS passed, $FAIL failed"

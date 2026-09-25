@@ -7,9 +7,11 @@ passwords are never stored -- have them at hand.
 1. **Domain** -- the name the server serves (e.g. `example.org`). Asked once at the first
    start; the instance directory `/opt/<domain>` is created from it.
 2. **DNS** -- A records (and AAAA if used) pointing at the server's public IP:
-   `traefik.<domain>` (dashboard), `tools.<domain>` (Toolserver), plus one per service
-   that will be added later (`gpt.`, `search.`, `cloud.`, ...). Let's Encrypt validates
-   over HTTP, so the names must resolve before Traefik starts.
+   `traefik.<domain>` (dashboard), `tools.<domain>` (Toolserver), `nextcloud.<domain>` and
+   `office.<domain>` (Nextcloud and Collabora, set up by step 7), plus one per service
+   that will be added later (`gpt.`, `search.`, ...). Let's Encrypt validates over HTTP,
+   so the names must resolve before Traefik asks for them; step 7 checks its three names
+   first and stops, before installing anything, while one has no record.
 3. **Ports** -- 22, 80 and 443 reachable from the internet (provider firewall / cloud
    security group). The installer's own firewall opens exactly these.
 4. **A password for the bootstrap user, or nothing at all** -- `manager` is created by
@@ -27,22 +29,19 @@ passwords are never stored -- have them at hand.
    deleted from the server after the proven login).
 6. **Let's Encrypt** -- the e-mail for expiry notices, and whether to start with
    `staging` (test certificates, no rate limits) or `production`.
-7. **GitHub access for step 7** -- the Toolserver repository is private, and a GitHub
-   deploy key belongs to **exactly one** repository. Step 7 therefore generates its own
-   key for it (`/root/.ssh/deploy-onions-toolserver`) and registers it as a read-only
-   deploy key by itself -- it asks once for a GitHub token (fine-grained, repository
-   `onions-toolserver`, permission *Administration: read and write*; create it under
-   *Settings > Developer settings > Fine-grained tokens*, short expiry). The token is used
-   for that one call and never stored. Alternative offered there: register the shown key
-   by hand at *repository > Settings > Deploy keys*. Whatever key cloned `onions-server`
-   itself (today also private) stays untouched; it cannot serve a second repository.
+7. **Access to the Toolserver's source (step 7)** -- nothing to prepare once the source is
+   published (release level 1): step 7 clones it without credentials. Until then only a
+   lingra host gets past step 7, with its own key (`/root/.ssh/id_ed25519.pub`) registered
+   as a read-only deploy key of the private repository; the installer says so at start,
+   before step 1, and shows the key.
 8. **Mail relay** -- SMTP host, port (587), user name and password of the account the
    server sends from (e.g. an Ionos mailbox), the sender address and the address that
    receives notifications.
 9. **Language and country** -- two choices from a list; they set locale, time zone and keyboard.
 10. **Toolserver secrets** -- nothing to prepare: `setup-toolserver.sh` generates them
-    into `/opt/toolserver/secrets/`. The menu password is printed once at the end of
-    step 7; write it down.
+    into `/opt/toolserver/secrets/`. The platform has one superadmin, `admin`, the same in
+    the Toolserver and in Nextcloud; the installer shows its password at the end of every
+    run (menu item `n` repeats it).
 
 Order on the machine (README has the commands): install `git` → clone this
 repository to `/opt/onions-server` → `sudo bash install.sh` → domain → menu item `a`
