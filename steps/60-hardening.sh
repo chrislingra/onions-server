@@ -127,7 +127,12 @@ _hard_mail() {
         _system_mail_wrapper
         return 0
     fi
-    if order_active; then
+    if [[ -n "${RELAY_PASSWORD:-}" ]]; then
+        # from the Toolserver's setup page (host-task.sh harden_mail): the Verwalter read the
+        # Toolserver's SMTP access and handed it over on stdin -- never through a file or the log
+        pw="$RELAY_PASSWORD"
+        log_ok "Relay password taken from the Toolserver's SMTP access."
+    elif order_active; then
         if pw="$(order_smtp_password)"; then
             log_ok "Relay password fetched from the installation order (once -- it is deleted there now)."
         else

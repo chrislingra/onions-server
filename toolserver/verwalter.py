@@ -1,11 +1,11 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v5)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v6)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
 bekommt dadurch keine Macht ueber den Onions-Server -- er kennt nur die
 Tabelle, und dieser Dienst kennt nur eine feste Liste von Vorgaengen.
 
-WAS ER KANN (die feste Liste, Stand v5)
+WAS ER KANN (die feste Liste, Stand v6)
     update   Das Abbild des Dienstes auf den neuen Stand bringen, dann
              "up -d" im Verzeichnis des Dienstes. Ob dabei gezogen oder
              gebaut wird, entscheidet die Compose-Datei selbst:
@@ -47,6 +47,18 @@ WAS ER KANN (die feste Liste, Stand v5)
              toolserver; der Key muss die Form eines Modulschluessels
              haben, sonst laeuft nichts. Ob das Modul eine Erweiterung ist
              (und nie lingras eigenes), prueft setup-module.sh selbst.
+    host     (v6, 2026-09-26) EINE Arbeit am Server selbst: host-task.sh <arbeit>
+             aus diesem Verzeichnis. Die Arbeit steht in target und muss in
+             HOST_ARBEITEN stehen; ihre Werte (Admin, oeffentlicher Schluessel)
+             in params -- hier noch einmal geprueft und als Umgebung HT_USER /
+             HT_KEY uebergeben, nie auf der Kommandozeile. Bediener 2026-09-26:
+             "staging umstellen / email/ Smtp nachbearbeiten / ssh-Zugriff
+             einrichten / weitere Haertungsschritte" -- die Einrichtungsseite
+             des Toolservers (Environment > Installation > Setup) schreibt den
+             Auftrag. Fuer harden_mail holt der Verwalter den SMTP-Zugang aus
+             dem Toolserver (docker exec ... svc_hostaufgaben relay) und reicht
+             ihn auf stdin weiter: das Kennwort steht weder in der Tabelle noch
+             im Protokoll.
 
     Fuer backup und setup gilt dasselbe: kein Skript im Katalog, ein
     absoluter Pfad, ein ".." oder eine Datei, die es nicht gibt -- der
@@ -116,6 +128,19 @@ AUFBAU_TIMEOUT = 7200
 #: Modulschluessels (platform_modules.key) -- dieselbe, die setup-module.sh prueft.
 MODUL_SKRIPT = "setup-module.sh"
 MODUL_KEY = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
+#: Die Arbeiten am Server (Aktion host) -- dieselbe Liste wie in host-task.sh und in
+#: services/svc_hostaufgaben.py des Toolservers. Wert: die Angaben, die sie braucht.
+HOST_SKRIPT = "host-task.sh"
+HOST_ARBEITEN = {
+    "status": (), "ssh_key": ("user", "key"), "ssh_harden": (), "user_add": ("user", "key"),
+    "harden_mail": (), "harden_intrusion": (), "harden_updates": (), "harden_rkhunter": (),
+    "rkhunter_off": (), "harden_scout": (), "cert_production": (),
+}
+HOST_BENUTZER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+HOST_SCHLUESSEL = re.compile(
+    r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]{40,16384}( [A-Za-z0-9._@+:-]{1,100})?$")
+#: Pakete holen und installieren (CrowdSec, rkhunter) darf dauern, aber nicht ewig.
+HOST_TIMEOUT = 1800
 #: Ziehen ist ein Netzzugriff, Bauen ist Arbeit. Deshalb zwei Grenzen.
 ZIEH_TIMEOUT = 900
 BAU_TIMEOUT = 3600
@@ -153,7 +178,8 @@ def psql_write(sql):
 def naechster_auftrag():
     rows = psql_read(
         "SELECT j.id, j.component_key, j.action, c.service_dir, c.compose_file, c.kind, "
-        "COALESCE(c.backup_script, ''), COALESCE(c.setup_script, ''), COALESCE(j.target, '') "
+        "COALESCE(c.backup_script, ''), COALESCE(c.setup_script, ''), COALESCE(j.target, ''), "
+        "COALESCE(j.params::text, '{}') "
         "FROM public.platform_agent_jobs j "
         "JOIN public.platform_components c ON c.key = j.component_key "
         "WHERE j.status = 'pending' ORDER BY j.id LIMIT 1")
@@ -345,9 +371,78 @@ def fuehre_modul_aus(datei, key):
     return _schritte_ausfuehren([["bash", datei, key]], AUFBAU_DIR, AUFBAU_TIMEOUT)
 
 
+def pruefe_hostauftrag(target, params_text):
+    """(Datei, Umgebung, Grund) -- die Arbeit muss in HOST_ARBEITEN stehen, ihre Werte
+    die Form haben, die der Toolserver schon geprueft hat. Alles andere wird benannt,
+    nicht ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
+    arbeit = (target or "").strip()
+    if arbeit not in HOST_ARBEITEN:
+        return "", None, "Unbekannte Arbeit am Server '%s'." % arbeit
+    try:
+        werte = json.loads(params_text or "{}") or {}
+    except ValueError:
+        return "", None, "Die Werte der Arbeit sind kein JSON."
+    umgebung = {}
+    for feld in HOST_ARBEITEN[arbeit]:
+        wert = str(werte.get(feld) or "").strip()
+        if feld == "user" and (not HOST_BENUTZER.match(wert) or wert in ("root", "manager")):
+            return "", None, "Unzulaessiger Benutzername '%s'." % wert
+        if feld == "key" and not HOST_SCHLUESSEL.match(wert):
+            return "", None, "Das ist kein oeffentlicher SSH-Schluessel."
+        umgebung["HT_" + feld.upper()] = wert
+    datei = os.path.join(AUFBAU_DIR, HOST_SKRIPT)
+    if not os.path.isfile(datei):
+        return "", None, "%s nicht gefunden -- dieser Server wurde nicht vom Installer eingerichtet." % datei
+    return datei, umgebung, ""
+
+
+def _relay_zugang():
+    """(json_text, grund) -- der SMTP-Zugang aus dem Toolserver, fuer harden_mail. Das
+    Ergebnis traegt das Kennwort und geht NUR auf stdin von host-task.sh."""
+    try:
+        r = subprocess.run(["docker", "exec", "-w", "/app", "toolserver", "python", "-m",
+                            "services.svc_hostaufgaben", "relay"],
+                           capture_output=True, text=True, timeout=60)
+    except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
+        return "", "Der SMTP-Zugang liess sich nicht aus dem Toolserver holen: %s" % exc
+    zeilen = r.stdout.strip().splitlines()
+    try:
+        d = json.loads(zeilen[-1]) if zeilen else {}
+    except ValueError:
+        d = {}
+    if r.returncode != 0 or not d or d.get("error"):
+        return "", ("Der Toolserver nennt keinen SMTP-Zugang: %s"
+                    % (d.get("error") or (r.stderr or r.stdout).strip()[-400:]))
+    return zeilen[-1], ""
+
+
+def fuehre_hostarbeit_aus(datei, arbeit, umgebung):
+    """host-task.sh <arbeit>, festes argv, die Werte in der Umgebung; fuer harden_mail
+    der SMTP-Zugang auf stdin (nie im Protokoll)."""
+    eingabe = ""
+    if arbeit == "harden_mail":
+        eingabe, grund = _relay_zugang()
+        if grund:
+            return grund, 1
+    env = dict(os.environ)
+    env.update(umgebung)
+    text = ["$ bash %s %s   (in %s)" % (datei, arbeit, AUFBAU_DIR)]
+    try:
+        r = subprocess.run(["bash", datei, arbeit], cwd=AUFBAU_DIR, input=eingabe, env=env,
+                           capture_output=True, text=True, timeout=HOST_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
+        text.append("Exception: %s" % exc)
+        return "\n".join(text), 1
+    text.append(r.stdout)
+    if r.stderr:
+        text.append(r.stderr)
+    text.append("exit %s" % r.returncode)
+    return "\n".join(text), r.returncode
+
+
 def bearbeite(auftrag):
     (job_id, component_key, action, service_dir, compose_file, kind,
-     backup_script, setup_script, target) = auftrag
+     backup_script, setup_script, target, params_text) = auftrag
     log("Auftrag #%s: %s / %s%s" % (job_id, component_key, action, (" " + target) if target else ""))
     markiere_laufend(job_id)
     if action == "update":
@@ -380,10 +475,16 @@ def bearbeite(auftrag):
             schliesse_ab(job_id, "failed", grund, None)
             return
         lauf = lambda: fuehre_modul_aus(datei, target.strip())  # noqa: E731
+    elif action == "host":
+        datei, umgebung, grund = pruefe_hostauftrag(target, params_text)
+        if grund:
+            schliesse_ab(job_id, "failed", grund, None)
+            return
+        lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v5 kennt 'update', 'restart', 'backup', "
-                     "'setup' und 'module'." % action, None)
+                     "Unbekannte Aktion '%s' -- v6 kennt 'update', 'restart', 'backup', "
+                     "'setup', 'module' und 'host'." % action, None)
         return
     try:
         text, code = lauf()
@@ -403,7 +504,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v5 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v6 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()

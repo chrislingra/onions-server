@@ -50,10 +50,12 @@ TOOLSERVER_DIR="/opt/toolserver"
 
 # The setup scripts that travel with this repository and live in /opt/<domain>/ afterwards,
 # where the Verwalter finds them (Environment > Installation, job "setup"; Environment >
-# Server-Config > Modules, job "module" = setup-module.sh). toolserver-link.sh and
-# toolserver-quelle.sh are no setup scripts: the others source them.
+# Server-Config > Modules, job "module" = setup-module.sh; Environment > Installation > Setup,
+# job "host" = host-task.sh -- SSH, hardening, admins, mail relay, certificate from the
+# interface). toolserver-link.sh and toolserver-quelle.sh are no setup scripts: the others
+# source them.
 SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-module.sh
-               toolserver-link.sh toolserver-quelle.sh)
+               host-task.sh toolserver-link.sh toolserver-quelle.sh)
 # Full operation (operator 2026-09-25: "alle uebrigen container die wir brauchen fuer den
 # Vollbetrieb bereits waehrend der terminalinstallation"; Weaviate and Nextcloud are the
 # mandatory ones, the rest follows from the interface). Order matters: Weaviate needs no

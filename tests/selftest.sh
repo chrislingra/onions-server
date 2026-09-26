@@ -237,6 +237,39 @@ PY
 }
 check "Verwalter v5: module jobs checked before they run" _t_verwalter_modul
 check "Verwalter v5 reads the job's target"         grep -q "COALESCE(j.target, '')" "$ROOT/toolserver/verwalter.py"
+# v6: the job "host" runs host-task.sh -- only a task of the fixed list, only checked values
+_t_verwalter_host() {
+    "$(command -v python3 || command -v python)" - "$ROOT/toolserver/verwalter.py" "$ROOT/toolserver" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("v", sys.argv[1])
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+v.AUFBAU_DIR = sys.argv[2]
+key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOnions0selftest0key0material0padding0xyz chris@ws"
+d, u, g = v.pruefe_hostauftrag("rm -rf", "{}");                               assert g and not d
+d, u, g = v.pruefe_hostauftrag("ssh_key", '{"user": "root", "key": "%s"}' % key); assert g and not d
+d, u, g = v.pruefe_hostauftrag("ssh_key", '{"user": "anna", "key": "x; reboot"}'); assert g and not d
+d, u, g = v.pruefe_hostauftrag("user_add", "not json");                       assert g and not d
+d, u, g = v.pruefe_hostauftrag("ssh_key", '{"user": "anna", "key": "%s"}' % key)
+assert not g and d.endswith("host-task.sh") and u == {"HT_USER": "anna", "HT_KEY": key}, (d, u, g)
+d, u, g = v.pruefe_hostauftrag("status", "{}");                              assert not g and u == {}
+PY
+}
+check "Verwalter v6: host jobs checked before they run" _t_verwalter_host
+check "Verwalter v6 reads the job's params"          grep -q "COALESCE(j.params::text, '{}')" "$ROOT/toolserver/verwalter.py"
+_t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
+check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
+# the task list is the same in the Verwalter and in host-task.sh
+_t_host_liste() {
+    local t
+    for t in status ssh_key ssh_harden user_add harden_mail harden_intrusion harden_updates \
+             harden_rkhunter rkhunter_off harden_scout cert_production; do
+        grep -q "\"$t\"" "$ROOT/toolserver/verwalter.py" || return 1
+        grep -qE "^[[:space:]]+$t\)" "$ROOT/toolserver/host-task.sh" || return 1
+    done
+}
+check "host-task.sh and the Verwalter know the same tasks" _t_host_liste
+# no terminal behind the Verwalter: host-task.sh never reads a keyboard
+check "host-task.sh answers no question itself" bash -c '! grep -nE "^[^#]*read -r? ?-p" "$1"' _ "$ROOT/toolserver/host-task.sh"
 # full operation from the terminal (operator 2026-09-25): Weaviate and Nextcloud in step 7
 _t_services() {
     local f
