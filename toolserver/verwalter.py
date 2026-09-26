@@ -1,11 +1,11 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v6)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v7)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
 bekommt dadurch keine Macht ueber den Onions-Server -- er kennt nur die
 Tabelle, und dieser Dienst kennt nur eine feste Liste von Vorgaengen.
 
-WAS ER KANN (die feste Liste, Stand v6)
+WAS ER KANN (die feste Liste, Stand v7)
     update   Das Abbild des Dienstes auf den neuen Stand bringen, dann
              "up -d" im Verzeichnis des Dienstes. Ob dabei gezogen oder
              gebaut wird, entscheidet die Compose-Datei selbst:
@@ -59,8 +59,25 @@ WAS ER KANN (die feste Liste, Stand v6)
              dem Toolserver (docker exec ... svc_hostaufgaben relay) und reicht
              ihn auf stdin weiter: das Kennwort steht weder in der Tabelle noch
              im Protokoll.
+    probe    (v7, 2026-09-26) der PROBELAUF eines Aufbauskripts: dasselbe
+             Skript aus dem Katalog wie setup (platform_components.setup_script),
+             dieselben Pruefungen, dasselbe feste argv, dieselbe Frist --
+             zusaetzlich der Umgebungswert ONIONS_PROBELAUF=1, eine Konstante;
+             nichts aus der Datenbank fliesst in Befehl oder Umgebung.
+             setup-graphify.sh baut damit einen kleinen Graphen nach
+             out/testlauf, der Graph des Projekts bleibt unberuehrt. Bediener
+             2026-09-23: "das ist als testlauf ein bisschen zu aufwendig und muss
+             bald moeglichst in eine GUI integriert werden" -- der Knopf Test run
+             unter Environment > Installation schreibt den Auftrag
+             (GAP-ENV-VERWALTER-PROBELAUF-01). SCHUTZ: ein Aufbauskript, das den
+             Wert nicht kennt, ueberliest ihn und faehrt den VOLLEN Aufbau
+             (gemessen 3192 s bis 6830 s, Modellkosten). probe laeuft deshalb
+             nur, wenn der Skripttext die Zeichenfolge ONIONS_PROBELAUF enthaelt,
+             sonst endet der Auftrag als failed mit genau diesem Grund. Eine
+             eigene Aktion und kein Feld an setup: ein Verwalter vor v7 endet
+             mit "Unbekannte Aktion 'probe'", nie mit einem vollen Aufbau.
 
-    Fuer backup und setup gilt dasselbe: kein Skript im Katalog, ein
+    Fuer backup, setup und probe gilt dasselbe: kein Skript im Katalog, ein
     absoluter Pfad, ein ".." oder eine Datei, die es nicht gibt -- der
     Auftrag endet sichtbar als failed, es wird nichts geraten. Aufgerufen
     wird mit festem argv ("bash <datei>"), nie ueber eine Shell -- der
@@ -124,6 +141,10 @@ SICHERUNG_TIMEOUT = 3600
 #: brauchte am 2026-09-21 gemessene 3192 Sekunden. Zwei Stunden sind die Grenze,
 #: ab der ein Lauf nicht mehr laeuft, sondern haengt.
 AUFBAU_TIMEOUT = 7200
+#: Der Umgebungswert des Probelaufs (Aktion probe). Er ist zugleich die Zeichenfolge,
+#: die ein Aufbauskript tragen muss, damit probe es startet -- ein Skript ohne sie
+#: wuerde den Wert ueberlesen und den vollen Aufbau fahren.
+PROBE_MARKE = "ONIONS_PROBELAUF"
 #: Das Skript, das eine Erweiterung holt (Aktion module), und die Form eines
 #: Modulschluessels (platform_modules.key) -- dieselbe, die setup-module.sh prueft.
 MODUL_SKRIPT = "setup-module.sh"
@@ -204,16 +225,16 @@ def _verzeichnis(service_dir):
     return d if d.startswith("/") else ("/opt/" + d.strip("/"))
 
 
-def _schritte_ausfuehren(schritte, verzeichnis, timeout):
+def _schritte_ausfuehren(schritte, verzeichnis, timeout, umgebung=None):
     """Schritte nacheinander im Verzeichnis; Abbruch beim ersten Fehler. Gibt
     (log_text, exit_code) zurueck -- exit_code des ERSTEN Schritts mit Fehler,
-    sonst der des letzten."""
+    sonst der des letzten. umgebung=None erbt die des Dienstes."""
     text = []
     for schritt in schritte:
         text.append("$ %s   (in %s)" % (" ".join(schritt), verzeichnis))
         try:
             r = subprocess.run(schritt, cwd=verzeichnis, capture_output=True,
-                               text=True, timeout=timeout)
+                               text=True, timeout=timeout, env=umgebung)
         except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
             text.append("Exception: %s" % exc)
             return "\n".join(text), 1
@@ -351,6 +372,33 @@ def fuehre_aufbau_aus(datei):
     return _schritte_ausfuehren([["bash", datei]], AUFBAU_DIR, AUFBAU_TIMEOUT)
 
 
+def pruefe_probeskript(setup_script):
+    """(Datei, Grund) -- wie pruefe_aufbauskript, dazu der SCHUTZ des Probelaufs:
+    das Skript muss die Zeichenfolge PROBE_MARKE tragen. Sonst wuerde es den
+    Umgebungswert ueberlesen und den vollen Aufbau fahren -- benannt, nicht
+    ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
+    datei, grund = pruefe_aufbauskript(setup_script)
+    if grund:
+        return "", grund
+    try:
+        with open(datei, encoding="utf-8", errors="replace") as f:
+            kennt = PROBE_MARKE in f.read()
+    except OSError as exc:
+        return "", "Aufbauskript nicht lesbar: %s (%s)" % (datei, exc)
+    if not kennt:
+        return "", ("%s kennt keinen Probelauf (die Zeichenfolge %s steht nicht darin) -- "
+                    "er wuerde den vollen Aufbau fahren und laeuft deshalb nicht." % (datei, PROBE_MARKE))
+    return datei, ""
+
+
+def fuehre_probe_aus(datei):
+    """Das Aufbauskript wie beim Aufbau -- festes argv, sein Verzeichnis, dieselbe
+    Frist --, dazu PROBE_MARKE=1 in der Umgebung."""
+    text, code = _schritte_ausfuehren([["bash", datei]], AUFBAU_DIR, AUFBAU_TIMEOUT,
+                                      umgebung=dict(os.environ, **{PROBE_MARKE: "1"}))
+    return "Probelauf: %s=1 gesetzt.\n%s" % (PROBE_MARKE, text), code
+
+
 def pruefe_modulauftrag(kind, target):
     """(Datei, Grund) -- eine Erweiterung holt nur der Bestandteil Toolserver,
     und nur mit einem Key in der Form eines Modulschluessels. Alles andere wird
@@ -469,6 +517,12 @@ def bearbeite(auftrag):
             schliesse_ab(job_id, "failed", grund, None)
             return
         lauf = lambda: fuehre_aufbau_aus(datei)  # noqa: E731
+    elif action == "probe":
+        datei, grund = pruefe_probeskript(setup_script)
+        if grund:
+            schliesse_ab(job_id, "failed", grund, None)
+            return
+        lauf = lambda: fuehre_probe_aus(datei)  # noqa: E731
     elif action == "module":
         datei, grund = pruefe_modulauftrag(kind, target)
         if grund:
@@ -483,8 +537,8 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v6 kennt 'update', 'restart', 'backup', "
-                     "'setup', 'module' und 'host'." % action, None)
+                     "Unbekannte Aktion '%s' -- v7 kennt 'update', 'restart', 'backup', "
+                     "'setup', 'probe', 'module' und 'host'." % action, None)
         return
     try:
         text, code = lauf()
@@ -504,7 +558,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v6 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v7 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()

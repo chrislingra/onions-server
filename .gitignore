@@ -7,3 +7,6 @@ site.env
 state/
 logs/
 *.log
+# Python's compile cache -- a leftover of the moment, never part of the installer
+__pycache__/
+*.pyc

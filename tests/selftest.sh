@@ -256,6 +256,35 @@ PY
 }
 check "Verwalter v6: host jobs checked before they run" _t_verwalter_host
 check "Verwalter v6 reads the job's params"          grep -q "COALESCE(j.params::text, '{}')" "$ROOT/toolserver/verwalter.py"
+# v7: the job "probe" runs the setup script with ONIONS_PROBELAUF=1 -- only a script that
+# knows the value, since one that does not would run the full setup
+_t_verwalter_probe() {
+    local d="$TMP/probe"
+    mkdir -p "$d"
+    printf '#!/usr/bin/env bash\n[[ "${ONIONS_PROBELAUF:-}" == 1 ]] && echo probe\n' > "$d/setup-kennt.sh"
+    printf '#!/usr/bin/env bash\necho full\n' > "$d/setup-ohne.sh"
+    "$(command -v python3 || command -v python)" - "$ROOT/toolserver/verwalter.py" "$d" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("v", sys.argv[1])
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+v.AUFBAU_DIR = sys.argv[2]
+d, g = v.pruefe_probeskript("");                   assert g and not d
+d, g = v.pruefe_probeskript("../setup-kennt.sh");  assert g and not d
+d, g = v.pruefe_probeskript("setup-fehlt.sh");     assert g and not d
+d, g = v.pruefe_probeskript("setup-ohne.sh");      assert g and not d and "ONIONS_PROBELAUF" in g
+d, g = v.pruefe_probeskript("setup-kennt.sh");     assert not g and d == os.path.join(sys.argv[2], "setup-kennt.sh")
+class R: returncode, stdout, stderr = 0, "", ""
+aufrufe = []
+v.subprocess.run = lambda argv, **kw: (aufrufe.append((argv, kw)), R())[1]
+text, code = v.fuehre_probe_aus(d)
+argv, kw = aufrufe[0]
+assert code == 0 and argv == ["bash", d] and kw["env"]["ONIONS_PROBELAUF"] == "1", aufrufe
+assert kw["timeout"] == v.AUFBAU_TIMEOUT and kw["cwd"] == sys.argv[2], kw
+v.fuehre_aufbau_aus(d)
+assert aufrufe[1][1].get("env") is None, "setup must not carry the test-run value"
+PY
+}
+check "Verwalter v7: test run only with a script that knows it" _t_verwalter_probe
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh
