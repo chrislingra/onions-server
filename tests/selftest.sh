@@ -273,18 +273,47 @@ d, g = v.pruefe_probeskript("../setup-kennt.sh");  assert g and not d
 d, g = v.pruefe_probeskript("setup-fehlt.sh");     assert g and not d
 d, g = v.pruefe_probeskript("setup-ohne.sh");      assert g and not d and "ONIONS_PROBELAUF" in g
 d, g = v.pruefe_probeskript("setup-kennt.sh");     assert not g and d == os.path.join(sys.argv[2], "setup-kennt.sh")
-class R: returncode, stdout, stderr = 0, "", ""
 aufrufe = []
-v.subprocess.run = lambda argv, **kw: (aufrufe.append((argv, kw)), R())[1]
+class P:
+    def __init__(self, argv, **kw):
+        aufrufe.append((argv, kw)); self.stdout = iter(["probe\n"]); self.returncode = 0
+    def wait(self, timeout=None): return 0
+    def kill(self): pass
+v.subprocess.Popen = P
 text, code = v.fuehre_probe_aus(d)
 argv, kw = aufrufe[0]
 assert code == 0 and argv == ["bash", d] and kw["env"]["ONIONS_PROBELAUF"] == "1", aufrufe
-assert kw["timeout"] == v.AUFBAU_TIMEOUT and kw["cwd"] == sys.argv[2], kw
+assert kw["cwd"] == sys.argv[2] and "probe" in text, (kw, text)
 v.fuehre_aufbau_aus(d)
 assert aufrufe[1][1].get("env") is None, "setup must not carry the test-run value"
 PY
 }
 check "Verwalter v7: test run only with a script that knows it" _t_verwalter_probe
+# v8: while a job runs, its output reaches the job row (progress), in the order it
+# comes; a step past its time limit is ended and the job fails
+_t_verwalter_fortschritt() {
+    "$(command -v python3 || command -v python)" - "$ROOT/toolserver/verwalter.py" "$TMP" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("v", sys.argv[1])
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+geschrieben = []
+v.psql_write = geschrieben.append
+v.ZWISCHENSTAND_SEKUNDEN = 0.2
+v._laufender_auftrag = 7
+# the markers are put together at run time -- the command line itself is part of the log
+kind = "import sys, time; print('ei' + 'ns', flush=True); time.sleep(0.8); print('zw' + 'ei', file=sys.stderr, flush=True)"
+text, code = v._schritte_ausfuehren([[sys.executable, "-c", kind]], sys.argv[2], 30)
+assert code == 0 and text.index("eins") < text.index("zwei") and text.endswith("exit 0"), text
+assert any("eins" in s and "WHERE id = 7 AND status = 'running'" in s and "zwei" not in s for s in geschrieben), geschrieben
+text, code = v._schritte_ausfuehren([[sys.executable, "-c", "import time; time.sleep(30)"]], sys.argv[2], 0.5)
+assert code == 1 and "Zeitgrenze" in text, text
+v._laufender_auftrag = None
+geschrieben.clear()
+v._zwischenstand("ohne Auftrag")
+assert not geschrieben
+PY
+}
+check "Verwalter v8: progress of a running job, time limit kept" _t_verwalter_fortschritt
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh

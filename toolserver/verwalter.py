@@ -1,11 +1,11 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v7)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v8)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
 bekommt dadurch keine Macht ueber den Onions-Server -- er kennt nur die
 Tabelle, und dieser Dienst kennt nur eine feste Liste von Vorgaengen.
 
-WAS ER KANN (die feste Liste, Stand v7)
+WAS ER KANN (die feste Liste, Stand v8)
     update   Das Abbild des Dienstes auf den neuen Stand bringen, dann
              "up -d" im Verzeichnis des Dienstes. Ob dabei gezogen oder
              gebaut wird, entscheidet die Compose-Datei selbst:
@@ -86,6 +86,18 @@ WAS ER KANN (die feste Liste, Stand v7)
     Was NICHT in der Liste steht, laeuft nicht. Ein Auftrag mit unbekannter
     Aktion endet als failed mit genau diesem Satz.
 
+FORTSCHRITT (v8, 2026-09-26): waehrend ein Auftrag laeuft, steht seine Ausgabe
+schon in platform_agent_jobs.log -- alle ZWISCHENSTAND_SEKUNDEN der Stand, nur
+wenn neue Zeilen da sind, und nur, solange die Zeile auf running steht. Bis v7
+kam das Protokoll erst mit dem Ende: ein Aufbau von 5705 s (Auftrag #206) war
+eine Stunde lang nur "running". Bediener 2026-09-23 zum Probelauf: "sieht
+Fortschritt und Ergebnis dort" (GAP-GF-LAUF-AUS-DEM-BILDSCHIRM-01); die
+Oberflaeche zeigt die letzte Zeile. stdout und stderr kommen dafuer in einem
+Strom, in der Reihenfolge, in der das Skript sie schreibt. Die Zeitgrenze
+bleibt, was sie war: danach wird das Skript beendet und der Auftrag endet als
+failed. Ausgenommen ist host (host-task.sh bekommt fuer harden_mail den
+SMTP-Zugang auf stdin und laeuft wie bisher am Stueck).
+
 Bediener-Entscheid 2026-09-21 ("alles ok, lets go"): damit laeuft eine
 Lieferung unbeaufsichtigt bis zum Neustart durch.
 
@@ -118,6 +130,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -165,6 +178,13 @@ HOST_TIMEOUT = 1800
 #: Ziehen ist ein Netzzugriff, Bauen ist Arbeit. Deshalb zwei Grenzen.
 ZIEH_TIMEOUT = 900
 BAU_TIMEOUT = 3600
+#: Wie oft der Stand eines laufenden Auftrags ins Protokoll geht (v8). Die Oberflaeche
+#: fragt alle drei Sekunden -- schneller als hier geschrieben wird, sieht sie nichts.
+ZWISCHENSTAND_SEKUNDEN = 15
+#: So viel vom Protokoll steht in der Tabelle -- am Ende wie zwischendurch.
+PROTOKOLL_ZEICHEN = 8000
+#: Der Auftrag, der gerade laeuft (bearbeite setzt ihn; es laeuft immer nur einer).
+_laufender_auftrag = None
 
 
 def log(msg):
@@ -216,8 +236,20 @@ def schliesse_ab(job_id, status, log_text, exit_code):
     psql_write(
         "UPDATE public.platform_agent_jobs SET status = '%s', finished_at = now(), "
         "log = '%s', exit_code = %s WHERE id = %s;"
-        % (pg_escape(status), pg_escape(log_text[-8000:]),
+        % (pg_escape(status), pg_escape(log_text[-PROTOKOLL_ZEICHEN:]),
            "NULL" if exit_code is None else int(exit_code), int(job_id)))
+
+
+def _zwischenstand(log_text):
+    """Den Stand des laufenden Auftrags ins Protokoll -- nur, solange er auf running
+    steht. Ein Fehler hier haelt den Auftrag nie an; er steht im Journal des Dienstes."""
+    if _laufender_auftrag is None:
+        return
+    try:
+        psql_write("UPDATE public.platform_agent_jobs SET log = '%s' WHERE id = %s AND status = 'running';"
+                   % (pg_escape(log_text[-PROTOKOLL_ZEICHEN:]), int(_laufender_auftrag)))
+    except Exception as exc:  # noqa: BLE001 -- Anzeige, kein Teil des Auftrags
+        log("Zwischenstand zu Auftrag #%s nicht geschrieben: %s" % (_laufender_auftrag, exc))
 
 
 def _verzeichnis(service_dir):
@@ -232,19 +264,58 @@ def _schritte_ausfuehren(schritte, verzeichnis, timeout, umgebung=None):
     text = []
     for schritt in schritte:
         text.append("$ %s   (in %s)" % (" ".join(schritt), verzeichnis))
-        try:
-            r = subprocess.run(schritt, cwd=verzeichnis, capture_output=True,
-                               text=True, timeout=timeout, env=umgebung)
-        except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
-            text.append("Exception: %s" % exc)
+        code = _schritt_ausfuehren(schritt, verzeichnis, timeout, umgebung, text)
+        if code is None:
             return "\n".join(text), 1
-        text.append(r.stdout)
-        if r.stderr:
-            text.append(r.stderr)
-        text.append("exit %s" % r.returncode)
-        if r.returncode != 0:
-            return "\n".join(text), r.returncode
+        text.append("exit %s" % code)
+        if code != 0:
+            return "\n".join(text), code
     return "\n".join(text), 0
+
+
+def _schritt_ausfuehren(schritt, verzeichnis, timeout, umgebung, text):
+    """Ein Schritt. Seine Ausgabe -- stdout und stderr in einem Strom, in der
+    Reihenfolge, in der sie kommt -- landet Zeile fuer Zeile in text, und
+    waehrenddessen alle ZWISCHENSTAND_SEKUNDEN im Protokoll des laufenden
+    Auftrags (v8). Gibt den Exit-Code zurueck; None, wenn der Schritt nicht
+    startete oder die Zeitgrenze erreichte -- der Grund steht dann in text."""
+    try:
+        proc = subprocess.Popen(schritt, cwd=verzeichnis, env=umgebung, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", bufsize=1)
+    except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
+        text.append("Exception: %s" % exc)
+        return None
+    zeilen = []
+
+    def lesen():
+        for zeile in proc.stdout:
+            zeilen.append(zeile.rstrip("\n"))
+
+    leser = threading.Thread(target=lesen, daemon=True)
+    leser.start()
+    frist = time.monotonic() + timeout
+    gemeldet = 0
+    while True:
+        try:
+            proc.wait(timeout=ZWISCHENSTAND_SEKUNDEN)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        if time.monotonic() >= frist:
+            proc.kill()
+            proc.wait()
+            leser.join(10)
+            text.extend(zeilen)
+            text.append("Zeitgrenze erreicht: '%s' nach %s s beendet." % (" ".join(schritt), timeout))
+            return None
+        stand = list(zeilen)
+        if len(stand) != gemeldet:
+            gemeldet = len(stand)
+            _zwischenstand("\n".join(text + stand[-400:]))
+    leser.join(10)
+    text.extend(zeilen)
+    return proc.returncode
 
 
 def baut_selbst(compose_file, verzeichnis):
@@ -489,6 +560,7 @@ def fuehre_hostarbeit_aus(datei, arbeit, umgebung):
 
 
 def bearbeite(auftrag):
+    global _laufender_auftrag
     (job_id, component_key, action, service_dir, compose_file, kind,
      backup_script, setup_script, target, params_text) = auftrag
     log("Auftrag #%s: %s / %s%s" % (job_id, component_key, action, (" " + target) if target else ""))
@@ -537,14 +609,17 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v7 kennt 'update', 'restart', 'backup', "
+                     "Unbekannte Aktion '%s' -- v8 kennt 'update', 'restart', 'backup', "
                      "'setup', 'probe', 'module' und 'host'." % action, None)
         return
+    _laufender_auftrag = job_id
     try:
         text, code = lauf()
     except Exception:  # noqa: BLE001 -- der Auftrag endet sichtbar, der Dienst laeuft weiter
         schliesse_ab(job_id, "failed", "Unerwarteter Fehler:\n%s" % traceback.format_exc(), None)
         return
+    finally:
+        _laufender_auftrag = None
     schliesse_ab(job_id, "ok" if code == 0 else "failed", text, code)
     log("Auftrag #%s beendet: %s" % (job_id, "ok" if code == 0 else "failed"))
 
@@ -558,7 +633,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v7 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v8 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()
