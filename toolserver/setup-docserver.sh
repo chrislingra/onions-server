@@ -22,7 +22,7 @@ IFS=$'\n\t'
 #   1. A re-run no longer tears the stack down ("docker compose down" + deleting the compose
 #      file) and no longer deletes the PaddleOCR image: the compose file is backed up and
 #      rewritten, "up -d" recreates what changed, the image is rebuilt from the build cache.
-#   2. No "usermod -aG docker ${SUDO_USER:-chris}": group membership is the installer's
+#   2. No "usermod -aG docker" with a fixed fallback user: group membership is the installer's
 #      business (step 3); here it is only done for a SUDO_USER that exists.
 #   3. The catalogue of the Toolserver marks the docserver installed (toolserver-link.sh),
 #      and sichern.sh is written (sicherung.sh): the settings and the compose file; the

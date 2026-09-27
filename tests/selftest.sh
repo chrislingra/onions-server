@@ -830,6 +830,50 @@ check "setup-module: lingra is refused"             _t_modul 1 lingra
 check "setup-module: the open core is no extension" _t_modul 1 knowledge
 check "setup-module: installed already = nothing"   _t_modul 0 governance
 
+# remove-module.sh (2026-09-27, GAP-ENV-ERWEITERUNG-ENTFERNEN-01): the counterpart refuses
+# the same way before it touches anything, and refuses an extension others require
+mkdir -p "$TMP/binr"
+cat > "$TMP/binr/docker" <<'DOCKER'
+#!/bin/bash
+q="${*: -1}"
+case "$q" in
+    *"ANY(requires)"*)      [[ "$q" == *"'workspace' = ANY"* ]] && echo "governance ramson" ;;
+    *"key = 'lingra'"*)     echo "internal|t" ;;
+    *"key = 'knowledge'"*)  echo "base|t" ;;
+    *"key = 'crm'"*)        echo "addon|f" ;;
+    *"key = 'workspace'"*)  echo "addon|t" ;;
+    *) : ;;
+esac
+DOCKER
+chmod +x "$TMP/binr/docker"
+_t_entfernen() {
+    local want="$1"; shift
+    PATH="$TMP/binr:$PATH" INSTALL_ROOT="$ROOT" TOOLSERVER_SRC="$_wc" TOOLSERVER_DIR="$TMP/opt_mod" \
+        bash "$ROOT/toolserver/remove-module.sh" "$@" >/dev/null 2>&1
+    [ $? -eq "$want" ]
+}
+check "remove-module: a malformed key is refused"      _t_entfernen 1 'crm;rm -rf /'
+check "remove-module: an unknown module is refused"    _t_entfernen 1 nowhere
+check "remove-module: lingra is refused"               _t_entfernen 1 lingra
+check "remove-module: the open core is never removed"  _t_entfernen 1 knowledge
+check "remove-module: not installed = nothing"         _t_entfernen 0 crm
+check "remove-module: required by others = refused"    _t_entfernen 1 workspace
+check "Verwalter v12 knows module_remove" grep -q '"module_remove"' "$ROOT/toolserver/verwalter.py"
+check "remove-module.sh travels to the host" bash -c '
+    grep -q "remove-module.sh" "$1"' _ "$ROOT/steps/70-toolserver.sh"
+
+# the docserver and the backups (GAP-ENV-KUNDE-WEITERE-DIENSTE-01, -DIENSTE-SICHERUNG-01)
+check "step 7 sets up the docserver" bash -c '
+    grep -qE "^SERVICE_SCRIPTS=.*setup-docserver\.sh" "$1"' _ "$ROOT/steps/70-toolserver.sh"
+check "sicherung.sh travels to the host" bash -c '
+    grep -q "sicherung.sh" "$1"' _ "$ROOT/steps/70-toolserver.sh"
+check "every service setup writes its sichern.sh" bash -c '
+    for f in setup-nextcloud.sh setup-weaviate.sh setup-docserver.sh; do
+        grep -q "backup_script_write" "$1/$f" || exit 1
+    done' _ "$ROOT/toolserver"
+check "sicherung.sh: archive, exclusion, retention, sichern.sh" bash "$ROOT/tests/test_sicherung.sh"
+check "setup-docserver.sh names no person" bash -c '! grep -qiE "chris|lingra" "$1"' _ "$ROOT/toolserver/setup-docserver.sh"
+
 echo
 echo "$PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
