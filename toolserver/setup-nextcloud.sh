@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# setup-nextcloud.sh -- Nextcloud + Collabora (Postgres, Redis) behind Traefik
+# setup-nextcloud.sh -- Nextcloud + Collabora (Postgres, Valkey) behind Traefik
 #
 # Call:  sudo /opt/<domain>/setup-nextcloud.sh   (the domain is this directory's name)
 #
@@ -32,6 +32,12 @@
 #      volume. On an existing installation the admin it already has stays as it is.
 #   7. No self-registration (GAP-USR-KONTEN-NUR-IM-TOOLSERVER-01): every run disables the
 #      apps that let an account come into being past the Toolserver (close_self_signup).
+#
+# 2026-09-27, GAP-ENV-REDIS-NACH-VALKEY-01: the cache is Valkey (BSD-3-Clause) instead of
+# redis:7-alpine -- Redis has had no open licence since 7.4 (RSALv2/SSPLv1). Same protocol,
+# same port 6379, Nextcloud talks to it unchanged; container and directory keep their names.
+# --dbfilename valkey.rdb: Valkey starts empty next to the dump.rdb Redis left behind (whether
+# it reads a 7.4 file is not measured; the content is only locks and sessions).
 # =============================================================================
 
 set -euo pipefail
@@ -145,7 +151,7 @@ set_permissions() {
     chown -R 33:33 "${VOLUMES_DIR}/nextcloud-data"   # www-data
     chown -R 70:70 "${VOLUMES_DIR}/postgres-data"    # postgres (alpine)
     chmod 700 "${VOLUMES_DIR}/postgres-data"
-    chown -R 999:999 "${VOLUMES_DIR}/redis-data"     # redis
+    chown -R 999:999 "${VOLUMES_DIR}/redis-data"     # valkey (uid 999 in the image)
     local grp=root
     getent group "$PLATFORM_GROUP" >/dev/null && grp="$PLATFORM_GROUP"
     chown root:"$grp" "$BASE_DIR" "$CREDENTIALS_DIR"
@@ -187,13 +193,13 @@ services:
       start_period: 30s
 
   redis_nextcloud:
-    image: redis:7-alpine
+    image: valkey/valkey:9-alpine
     container_name: redis_nextcloud
     restart: unless-stopped
     volumes:
       - ./volumes/redis-data:/data
     networks: [traefik_web]
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 900 1
+    command: valkey-server --dbfilename valkey.rdb --maxmemory 256mb --maxmemory-policy allkeys-lru --save 900 1
 
   nextcloud:
     image: nextcloud:stable
