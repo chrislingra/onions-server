@@ -23,6 +23,8 @@
 #   harden_intrusion  CrowdSec with bouncer (fail2ban on SUSE)
 #   harden_updates    automatic security updates
 #   harden_rkhunter / rkhunter_off / harden_trivy   the extras of step 6
+#   trivy_scan        every image of a running container through Trivy (vulnerabilities and
+#                     package licences); the result is reports/trivy-scan.json next to this script
 #   cert_production   Let's Encrypt production instead of staging
 #
 # Lives in the installer repository (toolserver/) and in /opt/<domain>/, next to
@@ -283,6 +285,92 @@ _cert_production() {
     log_ok "Traefik restarted; the first call of each address requests its certificate."
 }
 
+# --- trivy_scan ----------------------------------------------------------------------------
+# Every image of a running container through Trivy: the known vulnerabilities and the licences
+# of the packages inside. The result is written to reports/trivy-scan.json next to this script;
+# the Toolserver reads it read-only under /host-opt (Security > Server Hardening > Image Scan).
+# Not into the job log: the Verwalter keeps only its last 8000 characters there, far too little
+# for a dozen images. The findings list keeps CRITICAL and HIGH; the counts keep everything.
+_trivy_scan() {
+    local trivy=/usr/local/bin/trivy dir="$INSTANCE_DIR/reports" tmp img i=0
+    [[ -x "$trivy" ]] || die "Trivy is not installed -- run 'Install Trivy' on the setup page first (Extra hardening)."
+    mkdir -p "$dir"
+    chmod 755 "$dir"
+    tmp="$(mktemp -d)"
+    while IFS= read -r img; do
+        [[ -n "$img" ]] || continue
+        i=$((i + 1))
+        printf '%s' "$img" > "$tmp/$i.name"
+        log_info "Scanning $img"
+        if ! "$trivy" image --quiet --format json --scanners vuln,license --timeout 10m \
+                "$img" > "$tmp/$i.json" 2> "$tmp/$i.err"; then
+            log_warn "Trivy could not scan $img -- the report names the reason."
+        fi
+    done < <(docker ps --format '{{.Image}}' | sort -u)
+    (( i > 0 )) || { rm -rf "$tmp"; die "No container is running -- nothing to scan."; }
+    TMP="$tmp" OUT="$dir/trivy-scan.json" TRIVY_V="$("$trivy" --version 2>/dev/null | head -1)" \
+    python3 - <<'PY'
+import datetime, glob, json, os, socket
+
+tmp, out = os.environ["TMP"], os.environ["OUT"]
+STUFEN = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
+ARTEN = ("forbidden", "restricted", "reciprocal", "notice", "permissive", "unencumbered", "unknown")
+MELDEN = ("forbidden", "restricted", "reciprocal", "unknown")
+GRENZE = 300
+
+bilder = []
+for name_datei in sorted(glob.glob(os.path.join(tmp, "*.name")), key=lambda p: int(os.path.basename(p)[:-5])):
+    stamm = name_datei[:-5]
+    eintrag = {"image": open(name_datei, encoding="utf-8").read(), "ok": False, "error": "",
+               "vuln": dict.fromkeys(STUFEN, 0), "fixable": 0, "findings": [],
+               "licences": dict.fromkeys(ARTEN, 0), "licence_names": {}, "licence_flags": []}
+    try:
+        d = json.load(open(stamm + ".json", encoding="utf-8"))
+    except (OSError, ValueError):
+        fehler = open(stamm + ".err", encoding="utf-8", errors="replace").read().strip()
+        eintrag["error"] = (fehler.splitlines() or ["no result"])[-1][:400]
+        bilder.append(eintrag)
+        continue
+    eintrag["ok"] = True
+    for res in d.get("Results") or []:
+        for v in res.get("Vulnerabilities") or []:
+            stufe = v.get("Severity") if v.get("Severity") in STUFEN else "UNKNOWN"
+            eintrag["vuln"][stufe] += 1
+            if v.get("FixedVersion"):
+                eintrag["fixable"] += 1
+            if stufe in ("CRITICAL", "HIGH") and len(eintrag["findings"]) < GRENZE:
+                eintrag["findings"].append({
+                    "id": v.get("VulnerabilityID", ""), "severity": stufe,
+                    "pkg": v.get("PkgName", ""), "installed": v.get("InstalledVersion", ""),
+                    "fixed": v.get("FixedVersion", ""), "title": (v.get("Title") or "")[:200]})
+        for lz in res.get("Licenses") or []:
+            art = (lz.get("Category") or "unknown").lower()
+            art = art if art in ARTEN else "unknown"
+            eintrag["licences"][art] += 1
+            n = lz.get("Name") or "?"
+            eintrag["licence_names"][n] = eintrag["licence_names"].get(n, 0) + 1
+            if art in MELDEN and len(eintrag["licence_flags"]) < GRENZE:
+                eintrag["licence_flags"].append({"pkg": lz.get("PkgName") or lz.get("FilePath") or "",
+                                                 "licence": n, "category": art})
+    bilder.append(eintrag)
+
+bericht = {"scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+           "host": socket.gethostname(), "trivy": os.environ.get("TRIVY_V", ""), "images": bilder}
+with open(out + ".neu", "w", encoding="utf-8") as f:
+    json.dump(bericht, f, separators=(",", ":"))
+os.replace(out + ".neu", out)
+kritisch = sum(b["vuln"]["CRITICAL"] for b in bilder)
+hoch = sum(b["vuln"]["HIGH"] for b in bilder)
+gescheitert = sum(1 for b in bilder if not b["ok"])
+print("ONIONS_TRIVY_SCAN " + json.dumps({"images": len(bilder), "failed": gescheitert,
+                                         "critical": kritisch, "high": hoch, "file": out},
+                                        separators=(",", ":")))
+PY
+    chmod 644 "$dir/trivy-scan.json"
+    rm -rf "$tmp"
+    log_ok "Scan done -- Security > Server Hardening > Image Scan shows it."
+}
+
 case "$TASK" in
     status)           _status ;;
     ssh_key)          _ssh_key ;;
@@ -294,6 +382,7 @@ case "$TASK" in
     harden_rkhunter)  _hard_rkhunter ;;
     rkhunter_off)     _hard_rkhunter_off ;;
     harden_trivy)     _hard_trivy ;;
+    trivy_scan)       _trivy_scan ;;
     cert_production)  _cert_production ;;
     *) echo "[ERROR] usage: host-task.sh <task> -- unknown task '$TASK'"; exit 1 ;;
 esac

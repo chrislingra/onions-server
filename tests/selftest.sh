@@ -331,7 +331,7 @@ check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 _t_host_liste() {
     local t
     for t in status ssh_key ssh_harden user_add harden_mail harden_intrusion harden_updates \
-             harden_rkhunter rkhunter_off harden_trivy cert_production; do
+             harden_rkhunter rkhunter_off harden_trivy trivy_scan cert_production; do
         grep -q "\"$t\"" "$ROOT/toolserver/verwalter.py" || return 1
         grep -qE "^[[:space:]]+$t\)" "$ROOT/toolserver/host-task.sh" || return 1
     done

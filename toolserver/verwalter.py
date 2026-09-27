@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v10)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v11)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -116,6 +116,13 @@ unter Dockers Abovertrag (nur Binaerdateien, Anmeldung mit Docker-Hub-Konto),
 Trivy unter Apache-2.0 (GAP-ENV-DOCKER-SCOUT-ERSETZEN-01). Dieselbe Liste steht
 in host-task.sh und im Toolserver (services/svc_hostaufgaben.py, ab v1923).
 
+ARBEIT trivy_scan (v11, 2026-09-27): jedes Abbild eines laufenden Containers durch
+Trivy -- bekannte Schwachstellen und die Lizenzen der Pakete darin. Das Ergebnis
+schreibt host-task.sh nach /opt/<domain>/reports/trivy-scan.json, nicht ins
+Protokoll (das behaelt hier nur PROTOKOLL_ZEICHEN); der Toolserver liest es unter
+/host-opt (Security > Server Hardening > Image Scan, v1953,
+GAP-ENV-TRIVY-ERGEBNIS-MASKE-01).
+
 Bediener-Entscheid 2026-09-21 ("alles ok, lets go"): damit laeuft eine
 Lieferung unbeaufsichtigt bis zum Neustart durch.
 
@@ -187,7 +194,7 @@ HOST_SKRIPT = "host-task.sh"
 HOST_ARBEITEN = {
     "status": (), "ssh_key": ("user", "key"), "ssh_harden": (), "user_add": ("user", "key"),
     "harden_mail": (), "harden_intrusion": (), "harden_updates": (), "harden_rkhunter": (),
-    "rkhunter_off": (), "harden_trivy": (), "cert_production": (),
+    "rkhunter_off": (), "harden_trivy": (), "trivy_scan": (), "cert_production": (),
 }
 HOST_BENUTZER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 HOST_SCHLUESSEL = re.compile(
@@ -628,7 +635,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v10 kennt 'update', 'restart', 'backup', "
+                     "Unbekannte Aktion '%s' -- v11 kennt 'update', 'restart', 'backup', "
                      "'setup', 'probe', 'module' und 'host'." % action, None)
         return
     _laufender_auftrag = job_id
@@ -652,7 +659,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v10 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v11 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()
