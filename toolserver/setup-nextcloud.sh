@@ -330,6 +330,19 @@ link_toolserver() {
     ts_catalogue_installed nextcloud
 }
 
+# 2026-09-27 (GAP-ENV-KUNDE-DIENSTE-SICHERUNG-01): the backup script the catalogue names
+# (sichern.sh in /opt/nextcloud). The database travels as pg_dump, its raw directory and
+# the cache stay out; Nextcloud is in maintenance mode while it runs.
+write_backup_script() {
+    if [[ -f "${SCRIPT_DIR}/sicherung.sh" ]]; then
+        # shellcheck source=sicherung.sh
+        . "${SCRIPT_DIR}/sicherung.sh"
+        backup_script_write "$BASE_DIR" "backup_run nextcloud ${BASE_DIR} /opt/backups/nextcloud/sicherung --pg nextcloud_db ${DB_USER} ${DB_NAME} --exclude volumes/postgres-data --exclude volumes/redis-data --occ nextcloud"
+    else
+        log_warn "sicherung.sh missing in ${SCRIPT_DIR} -- no backup script written."
+    fi
+}
+
 main() {
     mkdir -p "$BASE_DIR"
     exec > >(tee -a "$LOG_FILE") 2>&1
@@ -349,6 +362,7 @@ main() {
     wait_for_nextcloud
     close_self_signup
     link_toolserver
+    write_backup_script
     echo
     log_success "Nextcloud ready: https://nextcloud.${DOMAIN}   Collabora: https://office.${DOMAIN}"
     log_info "Login: ${ADMIN_USER} with the platform superadmin's password (on a new installation)."

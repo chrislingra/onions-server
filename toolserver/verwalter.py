@@ -77,6 +77,15 @@ WAS ER KANN (die feste Liste, Stand v8)
              eigene Aktion und kein Feld an setup: ein Verwalter vor v7 endet
              mit "Unbekannte Aktion 'probe'", nie mit einem vollen Aufbau.
 
+    module_remove  (v12, 2026-09-27) EINE Erweiterung wieder vom Server nehmen:
+             remove-module.sh <key> aus diesem Verzeichnis -- das Gegenstueck
+             zu module, mit denselben Pruefungen (Bestandteil toolserver, Form
+             des Schluessels). Die Daten der Erweiterung bleiben; ob sie
+             entfernt werden darf (Stufe addon, keine andere haengt an ihr),
+             prueft remove-module.sh selbst. Eine eigene Aktion und kein Feld
+             an module: ein Verwalter vor v12 endet mit "Unbekannte Aktion",
+             nie mit einem Holen (GAP-ENV-ERWEITERUNG-ENTFERNEN-01).
+
     Fuer backup, setup und probe gilt dasselbe: kein Skript im Katalog, ein
     absoluter Pfad, ein ".." oder eine Datei, die es nicht gibt -- der
     Auftrag endet sichtbar als failed, es wird nichts geraten. Aufgerufen
@@ -187,6 +196,8 @@ PROBE_MARKE = "ONIONS_PROBELAUF"
 #: Das Skript, das eine Erweiterung holt (Aktion module), und die Form eines
 #: Modulschluessels (platform_modules.key) -- dieselbe, die setup-module.sh prueft.
 MODUL_SKRIPT = "setup-module.sh"
+#: Das Gegenstueck (Aktion module_remove, v12).
+MODUL_ENTFERNEN_SKRIPT = "remove-module.sh"
 MODUL_KEY = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 #: Die Arbeiten am Server (Aktion host) -- dieselbe Liste wie in host-task.sh und in
 #: services/svc_hostaufgaben.py des Toolservers. Wert: die Angaben, die sie braucht.
@@ -496,23 +507,24 @@ def fuehre_probe_aus(datei):
     return "Probelauf: %s=1 gesetzt.\n%s" % (PROBE_MARKE, text), code
 
 
-def pruefe_modulauftrag(kind, target):
-    """(Datei, Grund) -- eine Erweiterung holt nur der Bestandteil Toolserver,
-    und nur mit einem Key in der Form eines Modulschluessels. Alles andere wird
-    benannt, nicht ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
+def pruefe_modulauftrag(kind, target, skript=MODUL_SKRIPT):
+    """(Datei, Grund) -- eine Erweiterung holt (und entfernt) nur der Bestandteil
+    Toolserver, und nur mit einem Key in der Form eines Modulschluessels. Alles
+    andere wird benannt, nicht ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
     if kind != TOOLSERVER_KIND:
         return "", "Eine Erweiterung gehoert zum Toolserver, nicht zu einem Bestandteil der Art '%s'." % kind
     key = (target or "").strip()
     if not MODUL_KEY.match(key):
         return "", "Unzulaessiger Modulschluessel '%s' -- erwartet: Kleinbuchstaben, Ziffern, _." % key
-    datei = os.path.join(AUFBAU_DIR, MODUL_SKRIPT)
+    datei = os.path.join(AUFBAU_DIR, skript)
     if not os.path.isfile(datei):
         return "", "%s nicht gefunden -- dieser Server wurde nicht vom Installer eingerichtet." % datei
     return datei, ""
 
 
 def fuehre_modul_aus(datei, key):
-    """setup-module.sh <key>, festes argv, im Verzeichnis der Aufbauskripte."""
+    """setup-module.sh <key> (oder remove-module.sh <key>), festes argv, im
+    Verzeichnis der Aufbauskripte."""
     return _schritte_ausfuehren([["bash", datei, key]], AUFBAU_DIR, AUFBAU_TIMEOUT)
 
 
@@ -627,6 +639,12 @@ def bearbeite(auftrag):
             schliesse_ab(job_id, "failed", grund, None)
             return
         lauf = lambda: fuehre_modul_aus(datei, target.strip())  # noqa: E731
+    elif action == "module_remove":
+        datei, grund = pruefe_modulauftrag(kind, target, MODUL_ENTFERNEN_SKRIPT)
+        if grund:
+            schliesse_ab(job_id, "failed", grund, None)
+            return
+        lauf = lambda: fuehre_modul_aus(datei, target.strip())  # noqa: E731
     elif action == "host":
         datei, umgebung, grund = pruefe_hostauftrag(target, params_text)
         if grund:
@@ -635,8 +653,8 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v11 kennt 'update', 'restart', 'backup', "
-                     "'setup', 'probe', 'module' und 'host'." % action, None)
+                     "Unbekannte Aktion '%s' -- v12 kennt 'update', 'restart', 'backup', "
+                     "'setup', 'probe', 'module', 'module_remove' und 'host'." % action, None)
         return
     _laufender_auftrag = job_id
     try:

@@ -365,6 +365,19 @@ link_toolserver() {
     ts_catalogue_installed weaviate
 }
 
+# 2026-09-27 (GAP-ENV-KUNDE-DIENSTE-SICHERUNG-01): the backup script the catalogue names
+# (sichern.sh in /opt/weaviate). Weaviate writes all the time; it is paused while its data
+# directory is read, so the copy is consistent -- searches wait for that long.
+write_backup_script() {
+    if [[ -f "${SCRIPT_DIR}/sicherung.sh" ]]; then
+        # shellcheck source=sicherung.sh
+        . "${SCRIPT_DIR}/sicherung.sh"
+        backup_script_write "$BASE_DIR" "backup_run weaviate ${BASE_DIR} /opt/backups/weaviate/sicherung --pause weaviate"
+    else
+        log_warn "sicherung.sh missing in ${SCRIPT_DIR} -- no backup script written."
+    fi
+}
+
 main() {
     if [[ "$EUID" -ne 0 ]]; then
         log_warn "This script must run as root: sudo $0"
@@ -389,6 +402,7 @@ main() {
     start_stack
     verify
     link_toolserver
+    write_backup_script
 
     log_success "========================================================"
     log_success " Weaviate ready -- internal only."

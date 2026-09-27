@@ -251,9 +251,14 @@ d = json.load(sys.stdin)
 if d.get("error"):
     print("die %s" % shlex.quote(d["error"])); sys.exit(0)
 for k, v in (("SMTP_SERVER", d["host"]), ("SMTP_PORT", d["port"]), ("SMTP_USER", d["user"]),
-             ("SENDER_EMAIL", d.get("sender") or d["user"]), ("RELAY_PASSWORD", d["password"])):
+             ("SENDER_EMAIL", d.get("sender") or d["user"]), ("NOTIFY_TS", d.get("notify") or ""),
+             ("RELAY_PASSWORD", d["password"])):
     print("%s=%s" % (k, shlex.quote(str(v))))
 ')"
+    # 2026-09-27 (GAP-ENV-BENACHRICHTIGUNGSADRESSE-01): the address the server reports to is
+    # a field of the SMTP access in the Toolserver ("Server reports to"). Set there, it wins;
+    # otherwise what site.env holds, otherwise the sender address.
+    [[ -n "${NOTIFY_TS:-}" ]] && NOTIFICATION_EMAIL="$NOTIFY_TS"
     [[ -n "${NOTIFICATION_EMAIL:-}" ]] || NOTIFICATION_EMAIL="$SENDER_EMAIL"
     export SMTP_SERVER SMTP_PORT SMTP_USER SENDER_EMAIL NOTIFICATION_EMAIL RELAY_PASSWORD
     local k

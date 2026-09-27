@@ -44,7 +44,7 @@
 # (update) keeps the extensions the Toolserver found installed. Files of lingra's internal
 # tier never reach the host.
 
-STEP_70_TITLE="Toolserver (open core), Weaviate and Nextcloud"
+STEP_70_TITLE="Toolserver (open core), Weaviate, Nextcloud and docserver"
 # Where setup-toolserver.sh installs the Toolserver (its own default; this step passes none).
 TOOLSERVER_DIR="/opt/toolserver"
 
@@ -54,13 +54,17 @@ TOOLSERVER_DIR="/opt/toolserver"
 # job "host" = host-task.sh -- SSH, hardening, admins, mail relay, certificate from the
 # interface). toolserver-link.sh and toolserver-quelle.sh are no setup scripts: the others
 # source them.
-SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-module.sh
-               host-task.sh toolserver-link.sh toolserver-quelle.sh)
+SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-docserver.sh
+               setup-module.sh remove-module.sh host-task.sh toolserver-link.sh
+               toolserver-quelle.sh sicherung.sh)
 # Full operation (operator 2026-09-25: "alle uebrigen container die wir brauchen fuer den
-# Vollbetrieb bereits waehrend der terminalinstallation"; Weaviate and Nextcloud are the
-# mandatory ones, the rest follows from the interface). Order matters: Weaviate needs no
-# DNS name, Nextcloud does.
-SERVICE_SCRIPTS=(setup-weaviate.sh setup-nextcloud.sh)
+# Vollbetrieb bereits waehrend der terminalinstallation"). Order matters: Weaviate needs no
+# DNS name, Nextcloud does. 2026-09-27 (GAP-ENV-KUNDE-WEITERE-DIENSTE-01): the docserver
+# joins -- without Docling, Knowledge reads no PDF and no Office file.
+# sicherung.sh is no setup script: the setup scripts source it to write the sichern.sh of
+# their service (GAP-ENV-KUNDE-DIENSTE-SICHERUNG-01); remove-module.sh is the counterpart
+# of setup-module.sh (Verwalter job "module_remove", GAP-ENV-ERWEITERUNG-ENTFERNEN-01).
+SERVICE_SCRIPTS=(setup-weaviate.sh setup-nextcloud.sh setup-docserver.sh)
 # Every name this step publishes through Traefik.
 STEP_70_NAMES=(tools nextcloud office)
 
@@ -113,6 +117,7 @@ step_70_run() {
         log_info "Setting up $svc ($INSTANCE_DIR/$f)..."
         run bash "$INSTANCE_DIR/$f" || die "$f failed -- see above. The next start continues with step 7."
     done
+    _traefik_sicherung
     step_done 70
     echo
     log_ok "Handover complete. The Toolserver now owns the host: https://tools.$DOMAIN"
@@ -268,6 +273,17 @@ EOF
         log_err "Verwalter did not start -- see: journalctl -u onions-verwalter -n 30"
         return 1
     fi
+}
+
+# _traefik_sicherung -- /opt/traefik/sichern.sh, the backup script the catalogue names for
+# Traefik (GAP-ENV-KUNDE-DIENSTE-SICHERUNG-01): its configuration and acme.json with the
+# certificates. Written here, not in step 5: the library (sicherung.sh) arrives in
+# /opt/<domain> with this step.
+_traefik_sicherung() {
+    [[ -d /opt/traefik ]] || { log_warn "/opt/traefik is missing -- no backup script for Traefik."; return 0; }
+    # shellcheck source=../toolserver/sicherung.sh
+    . "$INSTANCE_DIR/sicherung.sh" || die "sicherung.sh is missing in $INSTANCE_DIR."
+    backup_script_write /opt/traefik "backup_run traefik /opt/traefik /opt/backups/traefik/sicherung"
 }
 
 # _git_probe -- can this host read TOOLSERVER_SOURCE the way git will use it, without asking
