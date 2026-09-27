@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v11)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v13)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -128,9 +128,21 @@ in host-task.sh und im Toolserver (services/svc_hostaufgaben.py, ab v1923).
 ARBEIT trivy_scan (v11, 2026-09-27): jedes Abbild eines laufenden Containers durch
 Trivy -- bekannte Schwachstellen und die Lizenzen der Pakete darin. Das Ergebnis
 schreibt host-task.sh nach /opt/<domain>/reports/trivy-scan.json, nicht ins
-Protokoll (das behaelt hier nur PROTOKOLL_ZEICHEN); der Toolserver liest es unter
+Protokoll (das behielt bis v12 nur die letzten 8000 Zeichen); der Toolserver liest es unter
 /host-opt (Security > Server Hardening > Image Scan, v1953,
 GAP-ENV-TRIVY-ERGEBNIS-MASKE-01).
+
+VOLLES PROTOKOLL (v13, 2026-09-27): in platform_agent_jobs.log steht die ganze
+Ausgabe eines Auftrags -- am Ende wie zwischendurch. Bis v12 waren es nur die
+letzten 8000 Zeichen (PROTOKOLL_ZEICHEN, seit v8 fuer die Fortschrittsanzeige
+gesetzt); zwischendurch sogar nur die letzten 400 Zeilen des laufenden Schritts.
+Bediener 2026-09-27: "warum nicht alles aus log in db?" -- einen Grund gab es
+nicht: die Spalte ist text, geschrieben wird ueber stdin, und ein voller
+Graphify-Bau schreibt gemessene 156 KB (/opt/graphify/out/bau.log vom
+2026-09-27). Gekuerzt wird erst ab der Schutzgrenze PROTOKOLL_GRENZE
+(2 000 000 Zeichen): dann bleiben Anfang und Ende, und eine Zeile dazwischen
+sagt, wie viel fehlt -- ein Skript, das endlos schreibt, sprengt die Zeile nicht
+(GAP-ENV-VERWALTER-PROTOKOLL-VOLL-01).
 
 Bediener-Entscheid 2026-09-21 ("alles ok, lets go"): damit laeuft eine
 Lieferung unbeaufsichtigt bis zum Neustart durch.
@@ -218,8 +230,11 @@ BAU_TIMEOUT = 3600
 #: Wie oft der Stand eines laufenden Auftrags ins Protokoll geht (v8). Die Oberflaeche
 #: fragt alle drei Sekunden -- schneller als hier geschrieben wird, sieht sie nichts.
 ZWISCHENSTAND_SEKUNDEN = 15
-#: So viel vom Protokoll steht in der Tabelle -- am Ende wie zwischendurch.
-PROTOKOLL_ZEICHEN = 8000
+#: Das Protokoll steht ganz in der Tabelle -- am Ende wie zwischendurch (v13; bis v12
+#: nur die letzten 8000 Zeichen). Erst ueber PROTOKOLL_GRENZE Zeichen wird gekuerzt:
+#: die ersten PROTOKOLL_ANFANG Zeichen und das Ende bleiben, dazwischen eine Zeile.
+PROTOKOLL_GRENZE = 2000000
+PROTOKOLL_ANFANG = 200000
 #: Der Auftrag, der gerade laeuft (bearbeite setzt ihn; es laeuft immer nur einer).
 _laufender_auftrag = None
 
@@ -269,11 +284,23 @@ def markiere_laufend(job_id):
                "started_at = now() WHERE id = %s;" % int(job_id))
 
 
+def _protokoll(log_text):
+    """Das Protokoll fuer die Tabelle (v13): ganz, bis PROTOKOLL_GRENZE Zeichen.
+    Darueber bleiben der Anfang und das Ende, dazwischen steht, wie viele Zeichen
+    fehlen -- was ein Skript zuerst und zuletzt sagte, bleibt so immer lesbar."""
+    text = log_text or ""
+    if len(text) <= PROTOKOLL_GRENZE:
+        return text
+    ende = PROTOKOLL_GRENZE - PROTOKOLL_ANFANG
+    return "%s\n[verwalter] ... %d Zeichen ausgelassen (Schutzgrenze %d Zeichen) ...\n%s" % (
+        text[:PROTOKOLL_ANFANG], len(text) - PROTOKOLL_GRENZE, PROTOKOLL_GRENZE, text[-ende:])
+
+
 def schliesse_ab(job_id, status, log_text, exit_code):
     psql_write(
         "UPDATE public.platform_agent_jobs SET status = '%s', finished_at = now(), "
         "log = '%s', exit_code = %s WHERE id = %s;"
-        % (pg_escape(status), pg_escape(log_text[-PROTOKOLL_ZEICHEN:]),
+        % (pg_escape(status), pg_escape(_protokoll(log_text)),
            "NULL" if exit_code is None else int(exit_code), int(job_id)))
 
 
@@ -284,7 +311,7 @@ def _zwischenstand(log_text):
         return
     try:
         psql_write("UPDATE public.platform_agent_jobs SET log = '%s' WHERE id = %s AND status = 'running';"
-                   % (pg_escape(log_text[-PROTOKOLL_ZEICHEN:]), int(_laufender_auftrag)))
+                   % (pg_escape(_protokoll(log_text)), int(_laufender_auftrag)))
     except Exception as exc:  # noqa: BLE001 -- Anzeige, kein Teil des Auftrags
         log("Zwischenstand zu Auftrag #%s nicht geschrieben: %s" % (_laufender_auftrag, exc))
 
@@ -349,7 +376,7 @@ def _schritt_ausfuehren(schritt, verzeichnis, timeout, umgebung, text):
         stand = list(zeilen)
         if len(stand) != gemeldet:
             gemeldet = len(stand)
-            _zwischenstand("\n".join(text + stand[-400:]))
+            _zwischenstand("\n".join(text + stand))
     leser.join(10)
     text.extend(zeilen)
     return proc.returncode
@@ -653,7 +680,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v12 kennt 'update', 'restart', 'backup', "
+                     "Unbekannte Aktion '%s' -- v13 kennt 'update', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove' und 'host'." % action, None)
         return
     _laufender_auftrag = job_id
@@ -677,7 +704,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v11 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v13 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()

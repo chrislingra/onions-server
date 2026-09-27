@@ -325,6 +325,35 @@ assert v.AUFBAU_TIMEOUT >= 6 * 3600 > 10834, v.AUFBAU_TIMEOUT
 PY
 }
 check "Verwalter v9: setup time limit of six hours, above the longest measured full build" _t_verwalter_aufbaugrenze
+# v13: the whole output reaches the job row -- while the job runs and at its end; only past
+# the safety limit is the middle left out, and a line says how much (until v12: the last
+# 8000 characters, while running only the last 400 lines of the current step)
+_t_verwalter_protokoll() {
+    "$(command -v python3 || command -v python)" - "$ROOT/toolserver/verwalter.py" "$TMP" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("v", sys.argv[1])
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+geschrieben = []
+v.psql_write = geschrieben.append
+v.ZWISCHENSTAND_SEKUNDEN = 0.2
+v._laufender_auftrag = 7
+# 600 lines of 31 characters: more than 400 lines and more than 8000 characters
+kind = "import time\nfor i in range(600): print('zeile %04d ' % i + 'x' * 20, flush=True)\ntime.sleep(0.8)"
+text, code = v._schritte_ausfuehren([[sys.executable, "-c", kind]], sys.argv[2], 30)
+assert code == 0 and "zeile 0000" in text and "zeile 0599" in text, text[-200:]
+zwischen = [s for s in geschrieben if "AND status = 'running'" in s]
+assert zwischen and "zeile 0000" in zwischen[-1] and "zeile 0599" in zwischen[-1], geschrieben[-1][:200]
+geschrieben.clear()
+v.schliesse_ab(7, "ok", text, 0)
+assert "zeile 0000" in geschrieben[0] and "zeile 0599" in geschrieben[0], geschrieben[0][:200]
+v._laufender_auftrag = None
+lang = "a" * v.PROTOKOLL_ANFANG + "m" * v.PROTOKOLL_GRENZE + "z" * 1000
+p = v._protokoll(lang)
+assert len(p) < v.PROTOKOLL_GRENZE + 200 and p.startswith("a" * 100) and p.endswith("z" * 1000), len(p)
+assert "ausgelassen" in p and v._protokoll("kurz") == "kurz" and v._protokoll(None) == ""
+PY
+}
+check "Verwalter v13: the whole log reaches the job row, cut only past a safety limit" _t_verwalter_protokoll
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh
