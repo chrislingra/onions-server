@@ -314,6 +314,17 @@ assert not geschrieben
 PY
 }
 check "Verwalter v8: progress of a running job, time limit kept" _t_verwalter_fortschritt
+# v9: a setup script may run six hours, about twice the longest full build measured so far --
+# Graphify's full build ran 10834 s on 2026-09-27, and with 7200 s every setup was cut off
+_t_verwalter_aufbaugrenze() {
+    "$(command -v python3 || command -v python)" - "$ROOT/toolserver/verwalter.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("v", sys.argv[1])
+v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+assert v.AUFBAU_TIMEOUT >= 6 * 3600 > 10834, v.AUFBAU_TIMEOUT
+PY
+}
+check "Verwalter v9: setup time limit of six hours, above the longest measured full build" _t_verwalter_aufbaugrenze
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh

@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v8)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v9)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -71,7 +71,7 @@ WAS ER KANN (die feste Liste, Stand v8)
              unter Environment > Installation schreibt den Auftrag
              (GAP-ENV-VERWALTER-PROBELAUF-01). SCHUTZ: ein Aufbauskript, das den
              Wert nicht kennt, ueberliest ihn und faehrt den VOLLEN Aufbau
-             (gemessen 3192 s bis 6830 s, Modellkosten). probe laeuft deshalb
+             (gemessen 3192 s bis 10834 s, Modellkosten). probe laeuft deshalb
              nur, wenn der Skripttext die Zeichenfolge ONIONS_PROBELAUF enthaelt,
              sonst endet der Auftrag als failed mit genau diesem Grund. Eine
              eigene Aktion und kein Feld an setup: ein Verwalter vor v7 endet
@@ -97,6 +97,19 @@ Strom, in der Reihenfolge, in der das Skript sie schreibt. Die Zeitgrenze
 bleibt, was sie war: danach wird das Skript beendet und der Auftrag endet als
 failed. Ausgenommen ist host (host-task.sh bekommt fuer harden_mail den
 SMTP-Zugang auf stdin und laeuft wie bisher am Stueck).
+
+ZEITGRENZE DES AUFBAUS (v9, 2026-09-27): sechs statt zwei Stunden. Der volle
+Bau des Graphify-Projekts toolserver brauchte am 2026-09-27 gemessene 10834 s
+(/opt/graphify/out/bau.log) -- seit Toolserver v1897 liest er jedes
+Handbuchkapitel in einem eigenen Block. setup-graphify.sh faehrt diesen Bau
+mit; mit 7200 s haette der Verwalter jeden Set up mitten im Bau beendet. Und
+beendet wird nur die aeussere bash: der Bau laeuft verwaist weiter, der Schritt
+"Dienste starten" am Ende des Skripts laeuft nie, graphify und graphify-pflege
+blieben angehalten -- der Code Graph waere fuer alle Sitzungen weg, bis jemand
+eingreift. Sechs Stunden sind wieder rund das Doppelte des laengsten gemessenen
+Laufs, derselbe Abstand wie vorher (7200 s zu 3192 s). Dass ein langer Aufbau so
+lange jeden anderen Auftrag anhaelt, bleibt: GAP-ENV-VERWALTER-LANGER-AUFTRAG-
+SPERRT-01.
 
 Bediener-Entscheid 2026-09-21 ("alles ok, lets go"): damit laeuft eine
 Lieferung unbeaufsichtigt bis zum Neustart durch.
@@ -151,9 +164,10 @@ AUFBAU_DIR = os.path.dirname(EIGENE_DATEI)
 #: ewig -- sonst haelt ein haengendes Skript die Warteschlange fuer immer.
 SICHERUNG_TIMEOUT = 3600
 #: Ein Aufbau baut Abbilder, zieht Pakete und fuellt Daten -- der Graphify-Aufbau
-#: brauchte am 2026-09-21 gemessene 3192 Sekunden. Zwei Stunden sind die Grenze,
-#: ab der ein Lauf nicht mehr laeuft, sondern haengt.
-AUFBAU_TIMEOUT = 7200
+#: faehrt den vollen Bau mit, und der brauchte am 2026-09-27 gemessene 10834
+#: Sekunden (am 2026-09-21 noch 3192). Sechs Stunden, rund das Doppelte, sind die
+#: Grenze, ab der ein Lauf nicht mehr laeuft, sondern haengt (v9; bis v8 7200).
+AUFBAU_TIMEOUT = 6 * 3600
 #: Der Umgebungswert des Probelaufs (Aktion probe). Er ist zugleich die Zeichenfolge,
 #: die ein Aufbauskript tragen muss, damit probe es startet -- ein Skript ohne sie
 #: wuerde den Wert ueberlesen und den vollen Aufbau fahren.
@@ -609,7 +623,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v8 kennt 'update', 'restart', 'backup', "
+                     "Unbekannte Aktion '%s' -- v9 kennt 'update', 'restart', 'backup', "
                      "'setup', 'probe', 'module' und 'host'." % action, None)
         return
     _laufender_auftrag = job_id
@@ -633,7 +647,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v8 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v9 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()
