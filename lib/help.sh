@@ -150,7 +150,8 @@ is there."
   Recommended set: the three that belong on every host -- mail relay (so the machine can
     report), CrowdSec (detects and blocks attacks), automatic security updates.
   The single entries do exactly one of them, for repairing or for adding later.
-  rkhunter and Docker Scout are extras: useful, but they mail findings you have to read.
+  rkhunter and Trivy are extras: rkhunter mails findings you have to read, Trivy lists the
+    known vulnerabilities and the licences of the images when you ask it.
 Each part is idempotent -- running it again repairs rather than breaks."
 
 [step60.testmail]="Sends one mail through the freshly written relay. It is the only way to

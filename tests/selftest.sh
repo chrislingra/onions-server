@@ -331,7 +331,7 @@ check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 _t_host_liste() {
     local t
     for t in status ssh_key ssh_harden user_add harden_mail harden_intrusion harden_updates \
-             harden_rkhunter rkhunter_off harden_scout cert_production; do
+             harden_rkhunter rkhunter_off harden_trivy cert_production; do
         grep -q "\"$t\"" "$ROOT/toolserver/verwalter.py" || return 1
         grep -qE "^[[:space:]]+$t\)" "$ROOT/toolserver/host-task.sh" || return 1
     done
@@ -564,11 +564,11 @@ check "the order is fetched before the instance opens" bash -c 'sed -n "/^main()
 # step 6 runs the parts the order switched on, in the menu's order, and stays open on a failure
 _t_order_hard() (
     INSTANCE_DIR="$TMP/oh"; STATE_DIR="$INSTANCE_DIR/state"; LOG_FILE="$TMP/oh.log"; mkdir -p "$STATE_DIR"
-    printf 'DOMAIN=x.de\nHARDEN_MAIL=y\nHARDEN_INTRUSION=n\nHARDEN_UPDATES=y\nHARDEN_RKHUNTER=y\nHARDEN_SCOUT=n\n' > "$INSTANCE_DIR/order.env"
+    printf 'DOMAIN=x.de\nHARDEN_MAIL=y\nHARDEN_INTRUSION=n\nHARDEN_UPDATES=y\nHARDEN_RKHUNTER=y\nHARDEN_TRIVY=n\n' > "$INSTANCE_DIR/order.env"
     order_load
     calls=""
     _hard_mail() { calls+="mail "; }; _hard_intrusion() { calls+="intrusion "; }
-    _hard_autoupdates() { calls+="updates "; }; _hard_rkhunter() { calls+="rkhunter "; }; _hard_scout() { calls+="scout "; }
+    _hard_autoupdates() { calls+="updates "; }; _hard_rkhunter() { calls+="rkhunter "; }; _hard_trivy() { calls+="trivy "; }
     _order_hardening >/dev/null || exit 1
     [[ "$calls" == "mail updates rkhunter " ]] || exit 2
     step_is_done 60 || exit 3

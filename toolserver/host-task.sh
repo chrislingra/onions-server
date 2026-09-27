@@ -22,7 +22,7 @@
 #                     (the Verwalter reads them from the Toolserver's SMTP access)
 #   harden_intrusion  CrowdSec with bouncer (fail2ban on SUSE)
 #   harden_updates    automatic security updates
-#   harden_rkhunter / rkhunter_off / harden_scout   the extras of step 6
+#   harden_rkhunter / rkhunter_off / harden_trivy   the extras of step 6
 #   cert_production   Let's Encrypt production instead of staging
 #
 # Lives in the installer repository (toolserver/) and in /opt/<domain>/, next to
@@ -119,7 +119,7 @@ try:
     sudo_mitglieder = set(grp.getgrnam(os.environ["SUDO_GROUP"]).gr_mem)
 except KeyError:
     sudo_mitglieder = set()
-admins, scout = [], False
+admins = []
 for user in os.environ.get("ADMINS", "").split():
     try:
         home = pwd.getpwnam(user).pw_dir
@@ -136,8 +136,6 @@ for user in os.environ.get("ADMINS", "").split():
         if re.search(r"Accepted publickey for %s from " % re.escape(user), z):
             zuletzt = z.split()[0] if z.split() else "yes"
     admins.append({"user": user, "sudo": user in sudo_mitglieder, "keys": keys, "key_login": zuletzt})
-    if os.path.exists(os.path.join(home, ".docker", "cli-plugins", "docker-scout")):
-        scout = True
 
 tool = os.environ.get("TOOL", "crowdsec")
 intrusion = {"tool": tool, "active": aktiv(tool), "bouncer": aktiv("crowdsec-firewall-bouncer") if tool == "crowdsec" else None}
@@ -189,7 +187,8 @@ except KeyError:
 bericht = {"os": os.environ.get("OSKEY", ""), "sshd": sshd, "admins": admins, "bootstrap_user": bootstrap,
            "intrusion": intrusion, "updates": updates, "rkhunter": subprocess.run(
                ["sh", "-c", "command -v rkhunter"], capture_output=True).returncode == 0,
-           "scout": scout, "relay": relay, "acme_mode": acme, "firewall": firewall}
+           "trivy": os.access("/usr/local/bin/trivy", os.X_OK), "relay": relay, "acme_mode": acme,
+           "firewall": firewall}
 print("ONIONS_HOST_STATUS " + json.dumps(bericht, separators=(",", ":")))
 PY
 }
@@ -294,7 +293,7 @@ case "$TASK" in
     harden_updates)   _hard_autoupdates ;;
     harden_rkhunter)  _hard_rkhunter ;;
     rkhunter_off)     _hard_rkhunter_off ;;
-    harden_scout)     _hard_scout ;;
+    harden_trivy)     _hard_trivy ;;
     cert_production)  _cert_production ;;
     *) echo "[ERROR] usage: host-task.sh <task> -- unknown task '$TASK'"; exit 1 ;;
 esac

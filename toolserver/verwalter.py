@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v9)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v10)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -111,6 +111,11 @@ Laufs, derselbe Abstand wie vorher (7200 s zu 3192 s). Dass ein langer Aufbau so
 lange jeden anderen Auftrag anhaelt, bleibt: GAP-ENV-VERWALTER-LANGER-AUFTRAG-
 SPERRT-01.
 
+ARBEIT harden_trivy (v10, 2026-09-27): ersetzt harden_scout. Docker Scout steht
+unter Dockers Abovertrag (nur Binaerdateien, Anmeldung mit Docker-Hub-Konto),
+Trivy unter Apache-2.0 (GAP-ENV-DOCKER-SCOUT-ERSETZEN-01). Dieselbe Liste steht
+in host-task.sh und im Toolserver (services/svc_hostaufgaben.py, ab v1923).
+
 Bediener-Entscheid 2026-09-21 ("alles ok, lets go"): damit laeuft eine
 Lieferung unbeaufsichtigt bis zum Neustart durch.
 
@@ -182,7 +187,7 @@ HOST_SKRIPT = "host-task.sh"
 HOST_ARBEITEN = {
     "status": (), "ssh_key": ("user", "key"), "ssh_harden": (), "user_add": ("user", "key"),
     "harden_mail": (), "harden_intrusion": (), "harden_updates": (), "harden_rkhunter": (),
-    "rkhunter_off": (), "harden_scout": (), "cert_production": (),
+    "rkhunter_off": (), "harden_trivy": (), "cert_production": (),
 }
 HOST_BENUTZER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 HOST_SCHLUESSEL = re.compile(
@@ -623,7 +628,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v9 kennt 'update', 'restart', 'backup', "
+                     "Unbekannte Aktion '%s' -- v10 kennt 'update', 'restart', 'backup', "
                      "'setup', 'probe', 'module' und 'host'." % action, None)
         return
     _laufender_auftrag = job_id
@@ -647,7 +652,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v9 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v10 gestartet, Abfrage alle %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()

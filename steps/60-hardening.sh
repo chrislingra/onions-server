@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# steps/60-hardening.sh -- mail relay, CrowdSec, rkhunter, Docker Scout.
+# steps/60-hardening.sh -- mail relay, CrowdSec, rkhunter, Trivy.
 # The SMTP password is asked hidden and written only to /etc/msmtprc (mode 600, root).
 # Sourced by install.sh.
 
 STEP_60_TITLE="Hardening (mail relay, attack blocking, automatic security updates)"
 
 # The recommended set (operator 2026-09-17): mail relay, CrowdSec, automatic security
-# updates. rkhunter and Docker Scout stay available as extras, not in the set.
+# updates. rkhunter and Trivy stay available as extras, not in the set.
 step_60_run() {
     heading "$STEP_60_TITLE"
     if order_active; then _order_hardening; return; fi
@@ -14,7 +14,7 @@ step_60_run() {
     # because CrowdSec has no packages there at all (lib/os.sh, intrusion_tool).
     local pick tool; tool="$(intrusion_tool_name)"
     pick_option pick "Which part" set \
-        "set=Recommended set: mail relay, $tool, automatic security updates;mail=Mail relay only;crowdsec=$tool only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;scout=Extra: Docker Scout for the admin user;rkhunter_off=Remove rkhunter again;back=Back" \
+        "set=Recommended set: mail relay, $tool, automatic security updates;mail=Mail relay only;crowdsec=$tool only;updates=Automatic security updates only;rkhunter=Extra: rkhunter with daily report;trivy=Extra: Trivy (vulnerabilities and licences of the images);rkhunter_off=Remove rkhunter again;back=Back" \
         step60.part
     # Each part reports for itself, and one failing part does not swallow the others: until
     # 2026-09-23 this was an && chain that skipped everything after the first failure -- and
@@ -28,7 +28,7 @@ step_60_run() {
         crowdsec)     _hard_intrusion   || rc=1 ;;
         updates)      _hard_autoupdates || rc=1 ;;
         rkhunter)     _hard_rkhunter    || rc=1 ;;
-        scout)        _hard_scout       || rc=1 ;;
+        trivy)        _hard_trivy       || rc=1 ;;
         rkhunter_off) _hard_rkhunter_off || rc=1 ;;
         back)         return 0 ;;
     esac
@@ -40,13 +40,13 @@ step_60_run() {
 }
 
 # _order_hardening -- the parts an installation order switched on (HARDEN_MAIL,
-# HARDEN_INTRUSION, HARDEN_UPDATES, HARDEN_RKHUNTER, HARDEN_SCOUT; the Toolserver's mask
+# HARDEN_INTRUSION, HARDEN_UPDATES, HARDEN_RKHUNTER, HARDEN_TRIVY; the Toolserver's mask
 # Environment > Installation > New server, tab Hardening). The same rule as the menu's: every
 # part reports for itself, one failing part does not swallow the others, and a hardening
 # that half ran leaves the step open. The relay comes first -- the rkhunter report needs it.
 _order_hardening() {
     local rc=0 any=0 part
-    for part in MAIL INTRUSION UPDATES RKHUNTER SCOUT; do
+    for part in MAIL INTRUSION UPDATES RKHUNTER TRIVY; do
         [[ "$(order_answer "HARDEN_$part" || true)" == "y" ]] || continue
         any=1
         case "$part" in
@@ -54,7 +54,7 @@ _order_hardening() {
             INTRUSION) _hard_intrusion   || rc=1 ;;
             UPDATES)   _hard_autoupdates || rc=1 ;;
             RKHUNTER)  _hard_rkhunter    || rc=1 ;;
-            SCOUT)     _hard_scout       || rc=1 ;;
+            TRIVY)     _hard_trivy       || rc=1 ;;
         esac
     done
     (( any )) || log_warn "The order switches every part of the hardening off -- nothing done here."
@@ -390,15 +390,44 @@ EOF
     confirm "Run the first scan now (several minutes)?" n step60.rkhunter && rkhunter --check --skip-keypress --report-warnings-only || true
 }
 
-_hard_scout() {
-    heading "Docker Scout"
-    checklist_require ADMIN_USER
-    local version="1.14.0" home dir
-    home="$(getent passwd "$ADMIN_USER" | cut -d: -f6)"; dir="$home/.docker/cli-plugins"
-    sudo -u "$ADMIN_USER" mkdir -p "$dir"
-    curl -fsSL "https://github.com/docker/scout-cli/releases/download/v${version}/docker-scout_${version}_linux_amd64.tar.gz" -o /tmp/docker-scout.tgz
-    sudo -u "$ADMIN_USER" tar xzf /tmp/docker-scout.tgz -C "$dir" docker-scout
-    rm -f /tmp/docker-scout.tgz
-    chmod 755 "$dir/docker-scout"
-    sudo -u "$ADMIN_USER" "$dir/docker-scout" version >/dev/null && log_ok "Docker Scout $version for $ADMIN_USER (docker scout cves --image <name>)."
+# Trivy instead of Docker Scout (2026-09-27, GAP-ENV-DOCKER-SCOUT-ERSETZEN-01). Scout's CLI is
+# licensed under the Docker Subscription Service Agreement -- binaries only, a Docker Hub account
+# to log in; Trivy is Apache-2.0 and needs no account. Besides the known vulnerabilities of an
+# image it names the licences of the packages in it. One binary for the whole host in
+# /usr/local/bin. Version and checksums are written here, taken from the release's own
+# checksums file and GitHub's asset digest (both agreed, 2026-09-27): a release that changes
+# afterwards is refused, not installed. A newer version is a change of this function.
+_hard_trivy() {
+    heading "Trivy"
+    local version="0.74.0" arch sum tgz
+    case "$(uname -m)" in
+        x86_64)        arch="64bit"; sum="2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a" ;;
+        aarch64|arm64) arch="ARM64"; sum="b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5" ;;
+        *) log_err "No Trivy release is pinned here for $(uname -m)."; return 1 ;;
+    esac
+    tgz="/tmp/trivy_${version}_${arch}.tgz"
+    curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${version}/trivy_${version}_Linux-${arch}.tar.gz" -o "$tgz" \
+        || { log_err "Trivy ${version} could not be downloaded."; rm -f "$tgz"; return 1; }
+    if [[ "$(sha256sum "$tgz" | cut -d' ' -f1)" != "$sum" ]]; then
+        rm -f "$tgz"
+        log_err "Trivy ${version}: the download does not match the checksum written here -- not installed."
+        return 1
+    fi
+    tar xzf "$tgz" -C /usr/local/bin trivy
+    rm -f "$tgz"
+    chmod 755 /usr/local/bin/trivy
+    /usr/local/bin/trivy --version >/dev/null || { log_err "Trivy was unpacked but does not start."; return 1; }
+    _remove_docker_scout
+    log_ok "Trivy ${version} in /usr/local/bin -- trivy image <name>; licences: trivy image --scanners license <name>."
+}
+
+# Docker Scout from an earlier run of this step goes: the point of the change is that no
+# commercially licensed tool stays on the host.
+_remove_docker_scout() {
+    local home f
+    for home in /root /home/*; do
+        f="$home/.docker/cli-plugins/docker-scout"
+        [[ -e "$f" ]] || continue
+        rm -f "$f" && log_ok "Docker Scout removed: $f"
+    done
 }

@@ -150,7 +150,7 @@ use it, never prompts, and shows git's reason if it fails.
 | 3 Personal admins | users with password, sudo, SFTP (`internal-sftp`); SSH keys and hardening optional (else later in the Toolserver) |
 | 4 Docker | Engine + Compose v2 plugin from the vendor (distribution on SUSE), network `traefik_web` |
 | 5 Traefik | `/opt/traefik` from `templates/`, Let's Encrypt staging/production, dashboard auth |
-| 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Docker Scout |
+| 6 Hardening | recommended set: mail relay (msmtp), CrowdSec + bouncer, automatic security updates; extras: rkhunter, Trivy |
 | 7 Toolserver, Weaviate, Nextcloud | checks the DNS records of `tools.`, `nextcloud.`, `office.` first; probes `TOOLSERVER_SOURCE` without prompting, clones it; clones only the open core (partial clone, sparse checkout from the registry in the start dump); places the setup scripts of `toolserver/` into `/opt/<domain>/` and runs `setup-toolserver.sh` with `--skip-docker --skip-traefik` (superadmin password generated, restart at the end); checks that only open-core tiles are live -- no extension, and lingra's internal tier never (extensions come from Environment > Server-Config > Modules, one by one); this host's own Verwalter (`toolserver/verwalter.py`, systemd unit `onions-verwalter`) that carries out the interface's jobs; `setup-weaviate.sh` and `setup-nextcloud.sh`, each registering its connector; handover |
 | 8 Finish | removes the bootstrap user after the checks |
 
