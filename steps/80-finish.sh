@@ -126,9 +126,14 @@ next_steps() {
         echo "              password: the one step 7 printed (file $pwfile)"
     fi
     echo "              The same login is Nextcloud's admin: https://nextcloud.$DOMAIN"
-    echo "   3) The rest of the setup is done there, not here:"
-    echo "              Environment > Installation   further services (Open WebUI, Docserver, ...)"
-    echo "              Environment > Server-Config  running services, backups, logs"
+    echo "   3) After the login the Setup page opens by itself (Environment > Installation > Setup)."
+    echo "              It lists every step that is still required -- own password, personal"
+    echo "              superadmin, AI provider and key, embedding, imprint and privacy policy,"
+    echo "              mail, certificate, SSH, hardening, Weaviate, Nextcloud -- and the optional"
+    echo "              ones, each with its button or its screen. It measures each step itself"
+    echo "              and stops opening once all required steps are done."
+    echo "              Extensions (demo): Environment > Server-Config > Modules"
+    echo "              Further services:  Environment > Installation"
     echo
     echo "   Copy: select the password with the mouse (PuTTY copies on select; Windows Terminal:"
     echo "         Ctrl+Shift+C). Never Ctrl+C -- in a terminal that stops the running program."
