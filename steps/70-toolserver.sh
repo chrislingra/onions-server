@@ -55,8 +55,8 @@ TOOLSERVER_DIR="/opt/toolserver"
 # interface). toolserver-link.sh and toolserver-quelle.sh are no setup scripts: the others
 # source them.
 SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-docserver.sh
-               setup-module.sh remove-module.sh host-task.sh toolserver-link.sh
-               toolserver-quelle.sh sicherung.sh)
+               setup-chromium.sh setup-module.sh remove-module.sh host-task.sh
+               toolserver-link.sh toolserver-quelle.sh sicherung.sh)
 # Full operation (operator 2026-09-25: "alle uebrigen container die wir brauchen fuer den
 # Vollbetrieb bereits waehrend der terminalinstallation"). Order matters: Weaviate needs no
 # DNS name, Nextcloud does. 2026-09-27 (GAP-ENV-KUNDE-WEITERE-DIENSTE-01): the docserver
@@ -64,6 +64,9 @@ SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-do
 # sicherung.sh is no setup script: the setup scripts source it to write the sichern.sh of
 # their service (GAP-ENV-KUNDE-DIENSTE-SICHERUNG-01); remove-module.sh is the counterpart
 # of setup-module.sh (Verwalter job "module_remove", GAP-ENV-ERWEITERUNG-ENTFERNEN-01).
+# setup-chromium.sh travels but does not run here: the browser is the optional third fetch
+# stage of the research -- it runs without it and says so; Environment > Installation >
+# New installation sets it up (Verwalter job "setup").
 SERVICE_SCRIPTS=(setup-weaviate.sh setup-nextcloud.sh setup-docserver.sh)
 # Every name this step publishes through Traefik.
 STEP_70_NAMES=(tools nextcloud office)

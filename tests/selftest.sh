@@ -868,11 +868,15 @@ check "step 7 sets up the docserver" bash -c '
 check "sicherung.sh travels to the host" bash -c '
     grep -q "sicherung.sh" "$1"' _ "$ROOT/steps/70-toolserver.sh"
 check "every service setup writes its sichern.sh" bash -c '
-    for f in setup-nextcloud.sh setup-weaviate.sh setup-docserver.sh; do
+    for f in setup-nextcloud.sh setup-weaviate.sh setup-docserver.sh setup-chromium.sh; do
         grep -q "backup_script_write" "$1/$f" || exit 1
     done' _ "$ROOT/toolserver"
 check "sicherung.sh: archive, exclusion, retention, sichern.sh" bash "$ROOT/tests/test_sicherung.sh"
 check "setup-docserver.sh names no person" bash -c '! grep -qiE "chris|lingra" "$1"' _ "$ROOT/toolserver/setup-docserver.sh"
+check "setup-chromium.sh names no person" bash -c '! grep -qiE "chris|lingra" "$1"' _ "$ROOT/toolserver/setup-chromium.sh"
+check "setup-chromium.sh travels, runs from the interface" bash -c '
+    grep -qE "^SETUP_SCRIPTS=|setup-chromium\.sh" "$1" && ! grep -qE "^SERVICE_SCRIPTS=.*setup-chromium" "$1"' _ "$ROOT/steps/70-toolserver.sh"
+check "setup-chromium.sh registers its connector itself" grep -q 'ts_connector_register browser' "$ROOT/toolserver/setup-chromium.sh"
 
 echo
 echo "$PASS passed, $FAIL failed"
