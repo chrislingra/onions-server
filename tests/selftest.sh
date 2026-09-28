@@ -920,6 +920,8 @@ check "setup-libredwg.sh pins the release, checks its SHA-256, marks the catalog
     grep -qE "^readonly LIBREDWG_VERSION=\"[0-9.]+\"" "$1" && grep -q "dist.sha256" "$1" \
         && grep -q "ts_catalogue_installed \"\$KEY\"" "$1"' _ "$ROOT/toolserver/setup-libredwg.sh"
 check "setup-libredwg.sh is valid bash" bash -n "$ROOT/toolserver/setup-libredwg.sh"
+check "setup-toolserver.sh leaves programs to their setup script (no compose file to measure)" \
+    grep -q "FROM public.platform_components WHERE kind <> 'program'" "$ROOT/toolserver/setup-toolserver.sh"
 
 echo
 echo "$PASS passed, $FAIL failed"

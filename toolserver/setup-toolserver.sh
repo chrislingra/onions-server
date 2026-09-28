@@ -597,11 +597,14 @@ SQL
     #     (lingra.eu, 2026-09-24). A component counts as installed when its compose file lies
     #     in its directory; the date of one already marked stays. Every run, idempotent. The
     #     setup scripts of the services mark themselves once they ran (toolserver-link.sh).
+    #     2026-09-28 (Toolserver v2023): a component of kind 'program' (LibreDWG) has no compose
+    #     file and is not measured here -- its setup script (setup-libredwg.sh) marks it, and
+    #     this step would otherwise unmark it on every run.
     DA=(); FEHLT=()
     while IFS='|' read -r k dir file; do
         [ -n "$k" ] || continue
         if [ -n "$dir" ] && [ -n "$file" ] && [ -f "$dir/$file" ]; then DA+=("'$k'"); else FEHLT+=("'$k'"); fi
-    done < <(_psql_q "SELECT key, service_dir, compose_file FROM public.platform_components")
+    done < <(_psql_q "SELECT key, service_dir, compose_file FROM public.platform_components WHERE kind <> 'program'")
     _psql <<SQL
 UPDATE public.platform_components SET installed_at = COALESCE(installed_at, now()), updated_at = now()
  WHERE key IN ($(IFS=,; echo "${DA[*]:-''}")) AND installed_at IS NULL;
