@@ -902,6 +902,11 @@ check "every service setup writes its sichern.sh" bash -c '
     done' _ "$ROOT/toolserver"
 check "sicherung.sh: archive, exclusion, retention, sichern.sh" bash "$ROOT/tests/test_sicherung.sh"
 check "setup-docserver.sh names no person" bash -c '! grep -qiE "chris|lingra" "$1"' _ "$ROOT/toolserver/setup-docserver.sh"
+# The Toolserver calls tika:9998, docling:5001 and gotenberg:3000 (docker-compose.toolserver.yml);
+# the PaddleOCR container is gone since 2026-09-17 -- building it would cost time and memory for nothing.
+check "setup-docserver.sh builds Tika, Docling and Gotenberg, no PaddleOCR" bash -c '
+    for s in tika docling gotenberg; do grep -qE "^  ${s}:$" "$1" || exit 1; done
+    ! grep -qE "^  paddleocr:|docker build" "$1"' _ "$ROOT/toolserver/setup-docserver.sh"
 check "setup-chromium.sh names no person" bash -c '! grep -qiE "chris|lingra" "$1"' _ "$ROOT/toolserver/setup-chromium.sh"
 check "setup-chromium.sh travels, runs from the interface" bash -c '
     grep -qE "^SETUP_SCRIPTS=|setup-chromium\.sh" "$1" && ! grep -qE "^SERVICE_SCRIPTS=.*setup-chromium" "$1"' _ "$ROOT/steps/70-toolserver.sh"
