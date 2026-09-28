@@ -55,7 +55,7 @@ TOOLSERVER_DIR="/opt/toolserver"
 # interface). toolserver-link.sh and toolserver-quelle.sh are no setup scripts: the others
 # source them.
 SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-docserver.sh
-               setup-chromium.sh setup-module.sh remove-module.sh host-task.sh
+               setup-chromium.sh setup-libredwg.sh setup-module.sh remove-module.sh host-task.sh
                toolserver-link.sh toolserver-quelle.sh sicherung.sh)
 # Full operation (operator 2026-09-25: "alle uebrigen container die wir brauchen fuer den
 # Vollbetrieb bereits waehrend der terminalinstallation"). Order matters: Weaviate needs no
@@ -67,6 +67,9 @@ SETUP_SCRIPTS=(setup-toolserver.sh setup-weaviate.sh setup-nextcloud.sh setup-do
 # setup-chromium.sh travels but does not run here: the browser is the optional third fetch
 # stage of the research -- it runs without it and says so; Environment > Installation >
 # New installation sets it up (Verwalter job "setup").
+# setup-libredwg.sh travels the same way (2026-09-28, GAP-LIC-FREMDPROGRAMME-JE-MODUL-01): the
+# DWG reader of the Extrusion module is no service but a program; Environment > Server-Config >
+# Licences starts it with its Install button, after showing its licence.
 SERVICE_SCRIPTS=(setup-weaviate.sh setup-nextcloud.sh setup-docserver.sh)
 # Every name this step publishes through Traefik.
 STEP_70_NAMES=(tools nextcloud office)

@@ -911,6 +911,15 @@ check "setup-chromium.sh names no person" bash -c '! grep -qiE "chris|lingra" "$
 check "setup-chromium.sh travels, runs from the interface" bash -c '
     grep -qE "^SETUP_SCRIPTS=|setup-chromium\.sh" "$1" && ! grep -qE "^SERVICE_SCRIPTS=.*setup-chromium" "$1"' _ "$ROOT/steps/70-toolserver.sh"
 check "setup-chromium.sh registers its connector itself" grep -q 'ts_connector_register browser' "$ROOT/toolserver/setup-chromium.sh"
+# 2026-09-28 (GAP-LIC-FREMDPROGRAMME-JE-MODUL-01): the DWG reader of the Extrusion module is
+# installed from the interface (Licences > Install), not by a script typed in on the server.
+check "setup-libredwg.sh names no person" bash -c '! grep -qiE "chris|lingra" "$1"' _ "$ROOT/toolserver/setup-libredwg.sh"
+check "setup-libredwg.sh travels, runs from the interface" bash -c '
+    grep -q "setup-libredwg\.sh" "$1" && ! grep -qE "^SERVICE_SCRIPTS=.*setup-libredwg" "$1"' _ "$ROOT/steps/70-toolserver.sh"
+check "setup-libredwg.sh pins the release, checks its SHA-256, marks the catalogue" bash -c '
+    grep -qE "^readonly LIBREDWG_VERSION=\"[0-9.]+\"" "$1" && grep -q "dist.sha256" "$1" \
+        && grep -q "ts_catalogue_installed \"\$KEY\"" "$1"' _ "$ROOT/toolserver/setup-libredwg.sh"
+check "setup-libredwg.sh is valid bash" bash -n "$ROOT/toolserver/setup-libredwg.sh"
 
 echo
 echo "$PASS passed, $FAIL failed"
