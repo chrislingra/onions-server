@@ -982,7 +982,10 @@ def fuehre_update_aus(job_id, key, service_dir, compose_file):
         code = _lauf(text, ["docker", "compose", "-f", compose_file, "build"], verzeichnis, BAU_TIMEOUT)
     else:
         text.append("Kein build-Abschnitt: das Abbild wird gezogen. Gestartet wird noch nichts.")
-        code = _lauf(text, ["docker", "compose", "-f", compose_file, "pull"], verzeichnis, ZIEH_TIMEOUT)
+        # --quiet: ohne Fortschrittsanzeige -- sie fuellte das Ergebnis von Auftrag #320
+        # (terminal, 2026-09-28) mit rund 700 Zeilen je Schicht; Fehler kommen weiter.
+        code = _lauf(text, ["docker", "compose", "-f", compose_file, "pull", "--quiet"], verzeichnis,
+                     ZIEH_TIMEOUT)
     if code != 0:
         _namen_zurueck(vorher, text)
         return "\n".join(text), code, None
