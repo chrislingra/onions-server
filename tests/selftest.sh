@@ -306,7 +306,7 @@ text, code = v._schritte_ausfuehren([[sys.executable, "-c", kind]], sys.argv[2],
 assert code == 0 and text.index("eins") < text.index("zwei") and text.endswith("exit 0"), text
 assert any("eins" in s and "WHERE id = 7 AND status = 'running'" in s and "zwei" not in s for s in geschrieben), geschrieben
 text, code = v._schritte_ausfuehren([[sys.executable, "-c", "import time; time.sleep(30)"]], sys.argv[2], 0.5)
-assert code == 1 and "Zeitgrenze" in text, text
+assert code == 1 and "Time limit" in text, text
 v._laufender_auftrag = None
 geschrieben.clear()
 v._zwischenstand("ohne Auftrag")
@@ -350,7 +350,7 @@ v._laufender_auftrag = None
 lang = "a" * v.PROTOKOLL_ANFANG + "m" * v.PROTOKOLL_GRENZE + "z" * 1000
 p = v._protokoll(lang)
 assert len(p) < v.PROTOKOLL_GRENZE + 200 and p.startswith("a" * 100) and p.endswith("z" * 1000), len(p)
-assert "ausgelassen" in p and v._protokoll("kurz") == "kurz" and v._protokoll(None) == ""
+assert "omitted" in p and v._protokoll("kurz") == "kurz" and v._protokoll(None) == ""
 PY
 }
 check "Verwalter v13: the whole log reaches the job row, cut only past a safety limit" _t_verwalter_protokoll

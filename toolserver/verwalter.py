@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v14)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v15)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -178,6 +178,12 @@ Datenbank um. Seit v14 in dieser Reihenfolge:
 rollback spielt einen solchen Rueckweg zurueck -- und haelt vorher den Stand, den
 er ersetzt, im selben Ordner fest (vor-rueckweg-<stempel>/): auch der Rueckweg
 laesst sich zuruecknehmen.
+
+AUSGABE ENGLISCH (v15, 2026-09-28): jede Ausgabe englisch -- Protokoll, Gruende,
+Hinweise, Journal (Bediener: "jeglicher output ist en"). Schluessel und Werte des
+Ergebnisses bleiben (art, stand, halt, herkunft, ruecksicherung ...), der Toolserver
+liest sie; ebenso Ordnernamen (vor-update, vor-rueckweg-, auftrag), die Namen unter
+onions-rueckweg, manifest.json und die Marke ONIONS_PROBELAUF.
 
 Bediener-Entscheid 2026-09-21 ("alles ok, lets go"): damit laeuft eine
 Lieferung unbeaufsichtigt bis zum Neustart durch.
@@ -359,7 +365,7 @@ def _protokoll(log_text):
     if len(text) <= PROTOKOLL_GRENZE:
         return text
     ende = PROTOKOLL_GRENZE - PROTOKOLL_ANFANG
-    return "%s\n[verwalter] ... %d Zeichen ausgelassen (Schutzgrenze %d Zeichen) ...\n%s" % (
+    return "%s\n[verwalter] ... %d characters omitted (safety limit %d characters) ...\n%s" % (
         text[:PROTOKOLL_ANFANG], len(text) - PROTOKOLL_GRENZE, PROTOKOLL_GRENZE, text[-ende:])
 
 
@@ -386,7 +392,7 @@ def _zwischenstand(log_text):
         psql_write("UPDATE public.platform_agent_jobs SET log = '%s' WHERE id = %s AND status = 'running';"
                    % (pg_escape(_protokoll(log_text)), int(_laufender_auftrag)))
     except Exception as exc:  # noqa: BLE001 -- Anzeige, kein Teil des Auftrags
-        log("Zwischenstand zu Auftrag #%s nicht geschrieben: %s" % (_laufender_auftrag, exc))
+        log("Progress of job #%s not written: %s" % (_laufender_auftrag, exc))
 
 
 def _verzeichnis(service_dir):
@@ -444,7 +450,7 @@ def _schritt_ausfuehren(schritt, verzeichnis, timeout, umgebung, text):
             proc.wait()
             leser.join(10)
             text.extend(zeilen)
-            text.append("Zeitgrenze erreicht: '%s' nach %s s beendet." % (" ".join(schritt), timeout))
+            text.append("Time limit reached: '%s' ended after %s s." % (" ".join(schritt), timeout))
             return None
         stand = list(zeilen)
         if len(stand) != gemeldet:
@@ -473,18 +479,18 @@ def compose_config(compose_file, verzeichnis):
             ["docker", "compose", "-f", compose_file, "config", "--format", "json"],
             cwd=verzeichnis, capture_output=True, text=True, timeout=120)
     except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
-        return None, "Die Compose-Datei liess sich nicht lesen: %s" % exc
+        return None, "The compose file could not be read: %s" % exc
     if r.returncode != 0:
-        return None, ("Die Compose-Datei %s liess sich nicht lesen (exit %s):\n%s"
+        return None, ("The compose file %s could not be read (exit %s):\n%s"
                       % (compose_file, r.returncode, (r.stderr or r.stdout).strip()))
     try:
         daten = json.loads(r.stdout)
     except ValueError as exc:
-        return None, ("Die Antwort von 'docker compose config' war kein JSON (%s) -- "
-                      "damit ist nicht zu entscheiden, ob gebaut oder gezogen wird." % exc)
+        return None, ("The answer of 'docker compose config' was not JSON (%s) -- "
+                      "so it cannot be decided whether to build or to pull." % exc)
     dienste = daten.get("services")
     if not isinstance(dienste, dict) or not dienste:
-        return None, "In %s steht kein einziger Dienst -- da ist nichts zu aktualisieren." % compose_file
+        return None, "%s names no service at all -- there is nothing to update." % compose_file
     return daten, ""
 
 
@@ -534,7 +540,7 @@ def _docker_json(argumente, timeout=120):
     try:
         return json.loads(r.stdout), ""
     except ValueError as exc:
-        return None, "docker %s: keine JSON-Antwort (%s)" % (" ".join(argumente[:2]), exc)
+        return None, "docker %s: answer is not JSON (%s)" % (" ".join(argumente[:2]), exc)
 
 
 def _abbild(ref):
@@ -615,11 +621,11 @@ def _github_lizenz(repo, fassung):
             return json.loads(antwort.read().decode("utf-8")), "", False
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return None, "GitHub kennt in %s/%s%s keine Lizenzdatei." % (
-                repo[0], repo[1], (" zur Fassung " + fassung[:12]) if fassung else ""), True
-        return None, "GitHub antwortete mit HTTP %s auf %s" % (exc.code, url), False
+            return None, "GitHub knows no licence file in %s/%s%s." % (
+                repo[0], repo[1], (" at revision " + fassung[:12]) if fassung else ""), True
+        return None, "GitHub answered HTTP %s to %s" % (exc.code, url), False
     except Exception as exc:  # noqa: BLE001 -- der Grund geht an den Aufrufer
-        return None, "GitHub nicht erreichbar (%s): %s" % (url, exc), False
+        return None, "GitHub not reachable (%s): %s" % (url, exc), False
 
 
 def _normal(text):
@@ -653,7 +659,7 @@ def _lizenz_lesen(abbild, origin_url):
     if repo:
         daten, grund, fehlt = _github_lizenz(repo, fassung)
         if fehlt and fassung:
-            hinweis = "Fassung %s bei GitHub nicht gefunden, gelesen am Hauptzweig. " % fassung[:12]
+            hinweis = "Revision %s not found on GitHub, read from the main branch. " % fassung[:12]
             fassung = ""
             daten, grund, fehlt = _github_lizenz(repo, "")
         if grund and not fehlt:
@@ -662,16 +668,20 @@ def _lizenz_lesen(abbild, origin_url):
             try:
                 text = base64.b64decode(daten.get("content") or "").decode("utf-8", "replace")
             except (ValueError, TypeError) as exc:
-                return None, "Die Lizenzdatei von GitHub liess sich nicht lesen: %s" % exc
+                return None, "The licence file from GitHub could not be read: %s" % exc
             art = daten.get("license") or {}
             return {"spdx": art.get("spdx_id") or "", "name": art.get("name") or "", "angabe": angabe,
                     "quelle": "github.com/%s/%s@%s:%s" % (repo[0], repo[1], fassung[:12] or "HEAD",
                                                          daten.get("path") or "?"),
                     "herkunft": herkunft, "hinweis": hinweis.strip(), "text": text,
                     "fingerabdruck": "sha256:" + hashlib.sha256(_normal(text).encode("utf-8")).hexdigest()}, ""
-        hinweis += grund + " "
-    hinweis += ("Kein Lizenztext feststellbar: das Abbild nennt keine GitHub-Quelle"
-                + ("." if _github_repo(origin_url) else ", das Register keine GitHub-Adresse."))
+        # v15: hier nennt das Abbild (oder das Register) eine Quelle -- nur GitHub
+        # hat dort keine Lizenzdatei. Der Satz "nennt keine GitHub-Quelle" stand
+        # bis v14 auch in diesem Fall und war dann falsch.
+        hinweis += grund + " No licence text found; the fingerprint is taken from the licence label of the image."
+    else:
+        hinweis += ("No licence text found: the image names no GitHub source, "
+                    "the register no GitHub address.")
     return {"spdx": angabe, "name": "", "angabe": angabe, "quelle": "", "herkunft": herkunft,
             "hinweis": hinweis.strip(), "text": "",
             "fingerabdruck": "ohne-text:" + hashlib.sha256(angabe.encode("utf-8")).hexdigest()}, ""
@@ -710,13 +720,13 @@ def _lizenzen_pruefen(dienste, geaendert, ergebnis, text):
     for ref in sorted({dienste[d]["ref"] for d in geaendert}):
         if any(dienste[d]["baut"] for d in geaendert if dienste[d]["ref"] == ref):
             ergebnis["lizenzen"].append({"ref": ref, "stand": "gebaut"})
-            text.append("Lizenz %s: auf diesem Server gebaut -- geprueft werden gezogene Abbilder; "
-                        "was ein Bau hereinholt, legt seine Dockerfile fest." % ref)
+            text.append("Licence %s: built on this server -- pulled images are checked; "
+                        "what a build brings in is set by its Dockerfile." % ref)
             continue
         zeile = _registerzeile(ref)
         lizenz, grund = _lizenz_lesen(_abbild(ref) or {}, zeile[2] if zeile else "")
         if grund:
-            return angehalten, "Die Lizenz von %s liess sich nicht lesen: %s" % (ref, grund)
+            return angehalten, "The licence of %s could not be read: %s" % (ref, grund)
         vorige = _angenommen(ref)
         if vorige and vorige.get("fingerprint") == lizenz["fingerabdruck"]:
             stand = "unveraendert"
@@ -728,9 +738,9 @@ def _lizenzen_pruefen(dienste, geaendert, ergebnis, text):
         lizenz.update({"ref": ref, "stand": stand, "register": zeile[0] if zeile else "",
                        "register_name": zeile[1] if zeile else ""})
         ergebnis["lizenzen"].append(lizenz)
-        text.append("Lizenz %s: %s -- %s %s" % (
-            ref, {"unveraendert": "unveraendert", "neu": "NOCH NIE ANGENOMMEN",
-                  "geaendert": "GEAENDERT"}[stand],
+        text.append("Licence %s: %s -- %s %s" % (
+            ref, {"unveraendert": "unchanged", "neu": "NEVER ACCEPTED",
+                  "geaendert": "CHANGED"}[stand],
             lizenz["spdx"] or lizenz["angabe"] or "?", lizenz["quelle"] or lizenz["hinweis"]))
     return angehalten, ""
 
@@ -769,22 +779,22 @@ def _zu_sichern(dienste, geaendert, text):
                 continue
             gesehen.add((m["art"], m["quelle"]))
             if m["ro"]:
-                text.append("  nur lesend eingebunden, bleibt unveraendert: %s" % m["quelle"])
+                text.append("  mounted read-only, stays unchanged: %s" % m["quelle"])
                 continue
             if m["art"] == "bind":
                 if not _bind_zulaessig(m["quelle"]):
-                    text.append("  nicht gesichert (liegt nicht unter /opt/<dienst>/): %s" % m["quelle"])
+                    text.append("  not backed up (not under /opt/<service>/): %s" % m["quelle"])
                     continue
                 if not os.path.exists(m["quelle"]):
-                    text.append("  nicht gesichert (gibt es nicht): %s" % m["quelle"])
+                    text.append("  not backed up (does not exist): %s" % m["quelle"])
                     continue
                 ort = os.path.realpath(m["quelle"])
             else:
                 ort, grund = _datentraeger_ort(m["quelle"])
                 if grund:
-                    return None, "Datentraeger %s: %s" % (m["quelle"], grund)
+                    return None, "Volume %s: %s" % (m["quelle"], grund)
                 if not ort:
-                    text.append("  nicht gesichert (Datentraeger gibt es noch nicht): %s" % m["quelle"])
+                    text.append("  not backed up (volume does not exist yet): %s" % m["quelle"])
                     continue
             name = re.sub(r"[^A-Za-z0-9_.-]+", "_", m["quelle"].strip("/"))[-40:]
             liste.append({"dienst": d, "art": m["art"], "quelle": m["quelle"], "ort": ort,
@@ -805,7 +815,7 @@ def _platz_pruefen(eintraege, ordner_eltern):
     bedarf = sum(_groesse(e["ort"]) for e in eintraege)
     frei = shutil.disk_usage(ordner_eltern).free
     if bedarf + bedarf // 10 > frei:
-        return "Nicht genug Platz unter %s: %d MB noetig, %d MB frei. Nichts geaendert." % (
+        return "Not enough space under %s: %d MB needed, %d MB free. Nothing changed." % (
             ordner_eltern, bedarf // 1048576, frei // 1048576)
     return ""
 
@@ -832,13 +842,13 @@ def _archiv_schreiben(eintrag, ordner, text):
     # tar: 1 = eine Datei aenderte sich waehrend des Lesens -- die Dienste stehen,
     # also schreibt nur ein anderer, der denselben Ort teilt. Das Archiv ist ganz.
     if code < 0 or code > 1:
-        raise _Abbruch("Das Archiv von %s liess sich nicht schreiben (tar exit %s)." % (ort, code))
+        raise _Abbruch("The archive of %s could not be written (tar exit %s)." % (ort, code))
     if code == 1:
-        text.append("  WARNUNG: waehrend des Lesens hat sich eine Datei in %s geaendert -- "
-                    "ein anderer Dienst teilt diesen Ort." % ort)
+        text.append("  WARNING: a file in %s changed while it was being read -- "
+                    "another service shares this location." % ort)
     if not _lesbar(ziel):
-        raise _Abbruch("Das Archiv %s liess sich nicht zuruecklesen." % ziel)
-    text.append("  gesichert und zurueckgelesen: %s -> %s (%d MB)" % (
+        raise _Abbruch("The archive %s could not be read back." % ziel)
+    text.append("  backed up and read back: %s -> %s (%d MB)" % (
         eintrag["quelle"], eintrag["archiv"], os.path.getsize(ziel) // 1048576))
 
 
@@ -859,8 +869,8 @@ def _archiv_zurueck(eintrag, ordner, text):
         _ordner_leeren(ort)
     if _lauf(text, ["tar", "--numeric-owner", "-xpf", os.path.join(ordner, eintrag["archiv"]),
                     "-C", os.path.dirname(ort)], "/", SICHERUNG_TIMEOUT) != 0:
-        raise _Abbruch("Das Archiv %s liess sich nicht nach %s zurueckspielen." % (eintrag["archiv"], ort))
-    text.append("  zurueckgespielt: %s -> %s" % (eintrag["archiv"], eintrag["quelle"]))
+        raise _Abbruch("The archive %s could not be restored to %s." % (eintrag["archiv"], ort))
+    text.append("  restored: %s -> %s" % (eintrag["archiv"], eintrag["quelle"]))
 
 
 def _manifest_schreiben(ordner, manifest):
@@ -888,7 +898,7 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
     if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + geaendert, verzeichnis, 600) != 0:
         shutil.rmtree(ordner)
         _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
-        return None, "Die Dienste liessen sich nicht anhalten -- nichts gesichert, nichts geaendert."
+        return None, "The services could not be stopped -- nothing backed up, nothing changed."
     namen = {}
     # nur die Namen der geaenderten Dienste -- ein Dienst, dessen Abbild bleibt, braucht keinen Rueckweg
     vorher = {ref: k for ref, k in vorher.items() if any(dienste[d]["ref"] == ref for d in geaendert)}
@@ -899,7 +909,7 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
         for i, kennung in enumerate(alte):
             name = "%s:%s-a%d-%d" % (RUECKWEG_NAME, key, int(job_id), i + 1)
             if _lauf(text, ["docker", "tag", kennung, name], "/", 60) != 0:
-                raise _Abbruch("Das alte Abbild %s liess sich nicht festhalten." % kennung)
+                raise _Abbruch("The old image %s could not be kept under a name." % kennung)
             namen[kennung] = name
         _manifest_schreiben(ordner, {
             "auftrag": int(job_id), "key": key, "projekt": projekt, "compose_file": compose_file,
@@ -908,13 +918,13 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
                         for d in geaendert},
             "namen_vorher": vorher, "namen": namen, "sicherungen": liste})
     except (_Abbruch, OSError) as exc:
-        text.append("ABBRUCH: %s" % exc)
+        text.append("ABORTED: %s" % exc)
         _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
         for name in namen.values():
             _lauf(text, ["docker", "image", "rm", name], "/", 60)
         shutil.rmtree(ordner)
-        return None, "Der Rueckweg liess sich nicht anlegen (%s) -- die Dienste laufen auf dem alten Stand." % exc
-    text.append("Rueckweg angelegt: %s" % ordner)
+        return None, "The way back could not be created (%s) -- the services run on the old state." % exc
+    text.append("Way back created: %s" % ordner)
     return ordner, ""
 
 
@@ -926,9 +936,9 @@ def _gesundheit_warten(projekt, dienste_liste, text):
     while True:
         stand, grund = _container_stand(projekt)
         if grund:
-            text.append("Zustand nicht lesbar: %s" % grund)
+            text.append("State not readable: %s" % grund)
             return False, {}
-        jetzt = {d: "%s%s" % ((stand.get(d) or {}).get("zustand") or "fehlt",
+        jetzt = {d: "%s%s" % ((stand.get(d) or {}).get("zustand") or "missing",
                               ("/" + stand[d]["gesundheit"]) if (stand.get(d) or {}).get("gesundheit") else "")
                  for d in dienste_liste}
         schlecht = [d for d in dienste_liste if (stand.get(d) or {}).get("zustand") in ("exited", "dead")
@@ -936,7 +946,7 @@ def _gesundheit_warten(projekt, dienste_liste, text):
         gut = all((stand.get(d) or {}).get("zustand") == "running"
                   and (stand.get(d) or {}).get("gesundheit") in ("", "healthy") for d in dienste_liste)
         if gut or schlecht or time.monotonic() >= frist:
-            text.append("Zustand: %s" % ", ".join("%s %s" % (d, jetzt[d]) for d in dienste_liste))
+            text.append("State: %s" % ", ".join("%s %s" % (d, jetzt[d]) for d in dienste_liste))
             return gut, jetzt
         time.sleep(5)
 
@@ -956,7 +966,7 @@ def _alte_rueckwege_raeumen(key, text):
         for name in namen:
             _lauf(text, ["docker", "image", "rm", name], "/", 60)
         shutil.rmtree(pfad)
-        text.append("Aelterer Rueckweg entfernt: %s" % pfad)
+        text.append("Older way back removed: %s" % pfad)
 
 
 def fuehre_update_aus(job_id, key, service_dir, compose_file):
@@ -977,11 +987,11 @@ def fuehre_update_aus(job_id, key, service_dir, compose_file):
     vorher = {ref: (_abbild(ref) or {}).get("Id") for ref in refs}
     ergebnis = {"art": "update", "projekt": projekt, "dienste": {}, "lizenzen": []}
     if any(e["baut"] for e in dienste.values()):
-        text.append("Die Compose-Datei hat einen build-Abschnitt: das Abbild wird auf diesem\n"
-                    "Server gebaut, nicht aus einer Registry gezogen.")
+        text.append("The compose file has a build section: the image is built on this\n"
+                    "server, not pulled from a registry.")
         code = _lauf(text, ["docker", "compose", "-f", compose_file, "build"], verzeichnis, BAU_TIMEOUT)
     else:
-        text.append("Kein build-Abschnitt: das Abbild wird gezogen. Gestartet wird noch nichts.")
+        text.append("No build section: the image is pulled. Nothing is started yet.")
         # --quiet: ohne Fortschrittsanzeige -- sie fuellte das Ergebnis von Auftrag #320
         # (terminal, 2026-09-28) mit rund 700 Zeilen je Schicht; Fehler kommen weiter.
         code = _lauf(text, ["docker", "compose", "-f", compose_file, "pull", "--quiet"], verzeichnis,
@@ -996,19 +1006,19 @@ def fuehre_update_aus(job_id, key, service_dir, compose_file):
         ergebnis["dienste"][d] = {"ref": e["ref"], "alt": (alt.get(d) or {}).get("abbild") or "",
                                   "neu": neu.get(e["ref"]) or "", "geaendert": d in geaendert}
     if not geaendert:
-        text.append("Kein Dienst bekommt ein neues Abbild -- nichts gesichert, nichts neu gestartet.")
+        text.append("No service gets a new image -- nothing backed up, nothing restarted.")
         return "\n".join(text), 0, ergebnis
-    text.append("Neues Abbild fuer: %s" % ", ".join(geaendert))
+    text.append("New image for: %s" % ", ".join(geaendert))
     angehalten, grund = _lizenzen_pruefen(dienste, geaendert, ergebnis, text)
     if grund or angehalten:
         _namen_zurueck(vorher, text)
         if grund:
-            text.append("%s -- nichts geaendert, spaeter erneut versuchen." % grund)
+            text.append("%s -- nothing changed, try again later." % grund)
             return "\n".join(text), 1, ergebnis
         ergebnis["halt"] = "lizenz"
-        text.append("ANGEHALTEN: eine Lizenz ist neu oder hat sich geaendert. Nichts ist geaendert, "
-                    "die Dienste laufen auf dem alten Stand weiter. Unter Result die Lizenz ansehen "
-                    "und annehmen -- dann laeuft das Update weiter.")
+        text.append("HELD: a licence is new or has changed. Nothing is changed, "
+                    "the services keep running on the old state. Read the licence under Result "
+                    "and accept it -- then the update continues.")
         return "\n".join(text), EXIT_ANGEHALTEN, ergebnis
     ordner, grund = _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste,
                                       geaendert, alt, vorher, text)
@@ -1023,14 +1033,14 @@ def fuehre_update_aus(job_id, key, service_dir, compose_file):
     # des Servers wieder anzulaufen (restart: always).
     if _lauf(text, ["docker", "compose", "-f", compose_file, "up", "-d", "--remove-orphans"],
              verzeichnis, 900) != 0:
-        text.append("Der neue Stand ist nicht angelaufen. Roll back stellt den alten aus %s wieder her." % ordner)
+        text.append("The new state did not start. Roll back restores the old one from %s." % ordner)
         return "\n".join(text), 1, ergebnis
     gut, ergebnis["gesundheit"] = _gesundheit_warten(projekt, geaendert, text)
     if not gut:
-        text.append("Der neue Stand laeuft nicht sauber. Roll back stellt den alten aus %s wieder her." % ordner)
+        text.append("The new state does not run cleanly. Roll back restores the old one from %s." % ordner)
         return "\n".join(text), 1, ergebnis
     _alte_rueckwege_raeumen(key, text)
-    text.append("Update fertig. Der alte Stand liegt in %s; Roll back stellt ihn wieder her." % ordner)
+    text.append("Update done. The old state is kept in %s; Roll back restores it." % ordner)
     return "\n".join(text), 0, ergebnis
 
 
@@ -1043,16 +1053,16 @@ def _rueckweg_lesen(key, compose_file, verzeichnis, update_job):
     treffer = [d for d in (os.listdir(wurzel) if os.path.isdir(wurzel) else [])
                if (RUECKWEG_ORDNER.match(d) or [None, None])[1] == str(update_job)]
     if len(treffer) != 1:
-        return None, None, "Zum Update-Auftrag #%s liegt kein Rueckweg unter %s." % (update_job, wurzel)
+        return None, None, "There is no way back for update job #%s under %s." % (update_job, wurzel)
     ordner = os.path.join(wurzel, treffer[0])
     try:
         with open(os.path.join(ordner, "manifest.json"), encoding="utf-8") as f:
             manifest = json.load(f)
     except (OSError, ValueError) as exc:
-        return None, None, "manifest.json in %s nicht lesbar: %s" % (ordner, exc)
+        return None, None, "manifest.json in %s not readable: %s" % (ordner, exc)
     if (manifest.get("key"), manifest.get("compose_file"), manifest.get("verzeichnis")) != (
             key, compose_file, verzeichnis):
-        return None, None, "Der Rueckweg in %s gehoert nicht zu diesem Dienst." % ordner
+        return None, None, "The way back in %s does not belong to this service." % ordner
     for e in manifest.get("sicherungen") or []:
         if e["art"] == "bind":
             ok = _bind_zulaessig(e["ort"]) and os.path.realpath(e["quelle"]) == e["ort"]
@@ -1060,13 +1070,13 @@ def _rueckweg_lesen(key, compose_file, verzeichnis, update_job):
             ort, grund = _datentraeger_ort(e["quelle"])
             ok = not grund and ort == e["ort"]
         if not ok:
-            return None, None, "%s liegt nicht mehr dort, wo es gesichert wurde (%s)." % (e["quelle"], e["ort"])
+            return None, None, "%s is no longer where it was backed up (%s)." % (e["quelle"], e["ort"])
         archiv = os.path.join(ordner, e["archiv"])
         if not _lesbar(archiv):
-            return None, None, "Das Archiv %s fehlt oder ist nicht lesbar." % archiv
+            return None, None, "The archive %s is missing or not readable." % archiv
     for kennung, name in (manifest.get("namen") or {}).items():
         if (_abbild(name) or {}).get("Id") != kennung:
-            return None, None, "Das alte Abbild %s (%s) gibt es nicht mehr." % (name, kennung[:19])
+            return None, None, "The old image %s (%s) no longer exists." % (name, kennung[:19])
     return ordner, manifest, ""
 
 
@@ -1076,15 +1086,15 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text):
     try:
         werte = json.loads(params_text or "{}") or {}
     except ValueError:
-        return "Die Werte des Auftrags sind kein JSON.", 1, None
+        return "The job's values are not JSON.", 1, None
     update_job = werte.get("update_job")
     if not isinstance(update_job, int) or update_job <= 0:
-        return "Der Auftrag nennt kein Update (params.update_job).", 1, None
+        return "The job names no update (params.update_job).", 1, None
     text = []
     verzeichnis = _verzeichnis(service_dir)
     ordner, manifest, grund = _rueckweg_lesen(key, compose_file, verzeichnis, update_job)
     if grund:
-        return grund + " Nichts geaendert.", 1, None
+        return grund + " Nothing changed.", 1, None
     geaendert = manifest["geaendert"]
     liste = manifest.get("sicherungen") or []
     jetzt = os.path.join(ordner, "vor-rueckweg-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -1095,34 +1105,43 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text):
     ergebnis = {"art": "rueckweg", "update_job": update_job, "ordner": ordner, "jetzt": jetzt}
     if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + geaendert, verzeichnis, 600) != 0:
         _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
-        return "\n".join(text + ["Die Dienste liessen sich nicht anhalten -- nichts geaendert."]), 1, ergebnis
+        return "\n".join(text + ["The services could not be stopped -- nothing changed."]), 1, ergebnis
     try:
         for e in liste:
             _archiv_schreiben(e, jetzt, text)
     except (_Abbruch, OSError) as exc:
         _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
-        return "\n".join(text + ["ABBRUCH: %s -- nichts geaendert." % exc]), 1, ergebnis
-    text.append("Der Stand nach dem Update liegt in %s." % jetzt)
+        return "\n".join(text + ["ABORTED: %s -- nothing changed." % exc]), 1, ergebnis
+    text.append("The state after the update is kept in %s." % jetzt)
     try:
         for e in liste:
             _archiv_zurueck(e, ordner, text)
     except (_Abbruch, OSError) as exc:
-        text.append("ABBRUCH beim Zurueckspielen: %s. Die Dienste bleiben angehalten; der Stand "
-                    "nach dem Update liegt vollstaendig in %s." % (exc, jetzt))
+        text.append("ABORTED while restoring: %s. The services stay stopped; the state "
+                    "after the update is kept in full in %s." % (exc, jetzt))
         return "\n".join(text), 1, ergebnis
     for ref, kennung in sorted((manifest.get("namen_vorher") or {}).items()):
         if kennung and _lauf(text, ["docker", "tag", kennung, ref], "/", 60) != 0:
-            text.append("Der Name %s liess sich nicht auf den alten Stand setzen." % ref)
+            # v15: die Daten sind schon zurueck -- mit dem neuen Abbild zu
+            # starten hiesse neuer Code auf alten Daten. Darum bleiben die Dienste
+            # angehalten, und der Satz sagt es.
+            text.append("The name %s could not be set back to the old state. The data before "
+                        "the update is restored, so the services stay stopped rather than start "
+                        "the new image on it. The state after the update is kept in full in %s."
+                        % (ref, jetzt))
             return "\n".join(text), 1, ergebnis
     if _lauf(text, ["docker", "compose", "-f", compose_file, "up", "-d"], verzeichnis, 900) != 0:
+        text.append("docker compose up -d failed: data and images of the state before the update "
+                    "are in place, but the services did not start. The state after the update is "
+                    "kept in full in %s." % jetzt)
         return "\n".join(text), 1, ergebnis
     gut, ergebnis["gesundheit"] = _gesundheit_warten(manifest.get("projekt") or "", geaendert, text)
     abweichend = sorted(d for d, e in (manifest.get("dienste") or {}).items()
                         if e.get("alt") and e["alt"] != (manifest.get("namen_vorher") or {}).get(e.get("ref")))
     if abweichend:
-        text.append("HINWEIS: %s lief vor dem Update auf einem noch aelteren Stand als dem, auf den "
-                    "sein Name zeigte; zurueckgesetzt ist er auf den Stand des Namens." % ", ".join(abweichend))
-    text.append("Rueckweg %s." % ("fertig" if gut else "gelaufen, aber nicht jeder Dienst laeuft sauber"))
+        text.append("NOTE: before the update, %s ran on an even older state than the one its "
+                    "name pointed to; it is set back to the state of the name." % ", ".join(abweichend))
+    text.append("Rollback %s." % ("done" if gut else "ran, but not every service runs cleanly"))
     return "\n".join(text), 0 if gut else 1, ergebnis
 
 
@@ -1146,14 +1165,14 @@ def pruefe_sicherungsskript(service_dir, backup_script):
     """
     name = (backup_script or "").strip()
     if not name:
-        return "", "Kein Sicherungsskript im Katalog hinterlegt (platform_components.backup_script)."
+        return "", "No backup script recorded in the catalogue (platform_components.backup_script)."
     if name.startswith("/") or ".." in name or any(ch in name for ch in "\n\r\t\"'`$;|&"):
-        return "", "Unzulaessiger Skriptname '%s' -- erwartet wird ein Pfad im Dienstverzeichnis." % name
+        return "", "Invalid script name '%s' -- expected a path inside the service directory." % name
     if not (service_dir or "").strip():
-        return "", "Kein Verzeichnis fuer den Dienst hinterlegt -- ohne das laeuft kein Skript."
+        return "", "No directory recorded for the service -- without it no script runs."
     datei = os.path.join(_verzeichnis(service_dir), name)
     if not os.path.isfile(datei):
-        return "", "Sicherungsskript nicht gefunden: %s" % datei
+        return "", "Backup script not found: %s" % datei
     return datei, ""
 
 
@@ -1173,13 +1192,13 @@ def pruefe_aufbauskript(setup_script):
     """
     name = (setup_script or "").strip()
     if not name:
-        return "", "Kein Aufbauskript im Katalog hinterlegt (platform_components.setup_script)."
+        return "", "No setup script recorded in the catalogue (platform_components.setup_script)."
     if "/" in name or ".." in name or any(ch in name for ch in "\n\r\t\"'`$;|&"):
-        return "", ("Unzulaessiger Skriptname '%s' -- erwartet wird ein Dateiname in %s."
+        return "", ("Invalid script name '%s' -- expected a file name in %s."
                     % (name, AUFBAU_DIR))
     datei = os.path.join(AUFBAU_DIR, name)
     if not os.path.isfile(datei):
-        return "", "Aufbauskript nicht gefunden: %s" % datei
+        return "", "Setup script not found: %s" % datei
     return datei, ""
 
 
@@ -1205,10 +1224,10 @@ def pruefe_probeskript(setup_script):
         with open(datei, encoding="utf-8", errors="replace") as f:
             kennt = PROBE_MARKE in f.read()
     except OSError as exc:
-        return "", "Aufbauskript nicht lesbar: %s (%s)" % (datei, exc)
+        return "", "Setup script not readable: %s (%s)" % (datei, exc)
     if not kennt:
-        return "", ("%s kennt keinen Probelauf (die Zeichenfolge %s steht nicht darin) -- "
-                    "er wuerde den vollen Aufbau fahren und laeuft deshalb nicht." % (datei, PROBE_MARKE))
+        return "", ("%s has no test run (the string %s does not occur in it) -- "
+                    "it would run the full setup and is therefore not started." % (datei, PROBE_MARKE))
     return datei, ""
 
 
@@ -1217,7 +1236,7 @@ def fuehre_probe_aus(datei):
     Frist --, dazu PROBE_MARKE=1 in der Umgebung."""
     text, code = _schritte_ausfuehren([["bash", datei]], AUFBAU_DIR, AUFBAU_TIMEOUT,
                                       umgebung=dict(os.environ, **{PROBE_MARKE: "1"}))
-    return "Probelauf: %s=1 gesetzt.\n%s" % (PROBE_MARKE, text), code
+    return "Test run: %s=1 set.\n%s" % (PROBE_MARKE, text), code
 
 
 def pruefe_modulauftrag(kind, target, skript=MODUL_SKRIPT):
@@ -1225,13 +1244,13 @@ def pruefe_modulauftrag(kind, target, skript=MODUL_SKRIPT):
     Toolserver, und nur mit einem Key in der Form eines Modulschluessels. Alles
     andere wird benannt, nicht ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
     if kind != TOOLSERVER_KIND:
-        return "", "Eine Erweiterung gehoert zum Toolserver, nicht zu einem Bestandteil der Art '%s'." % kind
+        return "", "An extension belongs to the Toolserver, not to a component of kind '%s'." % kind
     key = (target or "").strip()
     if not MODUL_KEY.match(key):
-        return "", "Unzulaessiger Modulschluessel '%s' -- erwartet: Kleinbuchstaben, Ziffern, _." % key
+        return "", "Invalid module key '%s' -- expected: lower-case letters, digits, _." % key
     datei = os.path.join(AUFBAU_DIR, skript)
     if not os.path.isfile(datei):
-        return "", "%s nicht gefunden -- dieser Server wurde nicht vom Installer eingerichtet." % datei
+        return "", "%s not found -- this server was not set up by the installer." % datei
     return datei, ""
 
 
@@ -1247,22 +1266,22 @@ def pruefe_hostauftrag(target, params_text):
     nicht ausgefuehrt (R-NO-SILENT-FALLBACK-01)."""
     arbeit = (target or "").strip()
     if arbeit not in HOST_ARBEITEN:
-        return "", None, "Unbekannte Arbeit am Server '%s'." % arbeit
+        return "", None, "Unknown server task '%s'." % arbeit
     try:
         werte = json.loads(params_text or "{}") or {}
     except ValueError:
-        return "", None, "Die Werte der Arbeit sind kein JSON."
+        return "", None, "The task's values are not JSON."
     umgebung = {}
     for feld in HOST_ARBEITEN[arbeit]:
         wert = str(werte.get(feld) or "").strip()
         if feld == "user" and (not HOST_BENUTZER.match(wert) or wert in ("root", "manager")):
-            return "", None, "Unzulaessiger Benutzername '%s'." % wert
+            return "", None, "Invalid user name '%s'." % wert
         if feld == "key" and not HOST_SCHLUESSEL.match(wert):
-            return "", None, "Das ist kein oeffentlicher SSH-Schluessel."
+            return "", None, "That is not a public SSH key."
         umgebung["HT_" + feld.upper()] = wert
     datei = os.path.join(AUFBAU_DIR, HOST_SKRIPT)
     if not os.path.isfile(datei):
-        return "", None, "%s nicht gefunden -- dieser Server wurde nicht vom Installer eingerichtet." % datei
+        return "", None, "%s not found -- this server was not set up by the installer." % datei
     return datei, umgebung, ""
 
 
@@ -1274,14 +1293,14 @@ def _relay_zugang():
                             "services.svc_hostaufgaben", "relay"],
                            capture_output=True, text=True, timeout=60)
     except Exception as exc:  # noqa: BLE001 -- der Auftrag endet sichtbar als failed
-        return "", "Der SMTP-Zugang liess sich nicht aus dem Toolserver holen: %s" % exc
+        return "", "The SMTP access could not be fetched from the Toolserver: %s" % exc
     zeilen = r.stdout.strip().splitlines()
     try:
         d = json.loads(zeilen[-1]) if zeilen else {}
     except ValueError:
         d = {}
     if r.returncode != 0 or not d or d.get("error"):
-        return "", ("Der Toolserver nennt keinen SMTP-Zugang: %s"
+        return "", ("The Toolserver names no SMTP access: %s"
                     % (d.get("error") or (r.stderr or r.stdout).strip()[-400:]))
     return zeilen[-1], ""
 
@@ -1314,26 +1333,26 @@ def bearbeite(auftrag):
     global _laufender_auftrag
     (job_id, component_key, action, service_dir, compose_file, kind,
      backup_script, setup_script, target, params_text) = auftrag
-    log("Auftrag #%s: %s / %s%s" % (job_id, component_key, action, (" " + target) if target else ""))
+    log("Job #%s: %s / %s%s" % (job_id, component_key, action, (" " + target) if target else ""))
     markiere_laufend(job_id)
     if action == "update":
         if not compose_file or not service_dir:
             schliesse_ab(job_id, "failed",
-                         "Kein Verzeichnis oder keine Compose-Datei fuer '%s' hinterlegt." % component_key, None)
+                         "No directory or no compose file recorded for '%s'." % component_key, None)
             return
         lauf = lambda: fuehre_update_aus(job_id, component_key, service_dir, compose_file)  # noqa: E731
     elif action == "rollback":
         if kind == TOOLSERVER_KIND or not compose_file or not service_dir:
             schliesse_ab(job_id, "failed",
-                         "Ein Rueckweg gehoert zu einem Dienst mit Verzeichnis und Compose-Datei -- "
-                         "der Toolserver hat seinen eigenen (Rueckweg-Patch und Release-Marke).", None)
+                         "A rollback belongs to a service with a directory and a compose file -- "
+                         "the Toolserver has its own (rollback patch and release tag).", None)
             return
         lauf = lambda: fuehre_rueckweg_aus(job_id, component_key, service_dir, compose_file,  # noqa: E731
                                            params_text)
     elif action == "restart":
         if kind != TOOLSERVER_KIND and (not compose_file or not service_dir):
             schliesse_ab(job_id, "failed",
-                         "Kein Verzeichnis oder keine Compose-Datei fuer '%s' hinterlegt." % component_key, None)
+                         "No directory or no compose file recorded for '%s'." % component_key, None)
             return
         lauf = lambda: fuehre_neustart_aus(kind, service_dir, compose_file)  # noqa: E731
     elif action == "backup":
@@ -1374,14 +1393,14 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unbekannte Aktion '%s' -- v14 kennt 'update', 'rollback', 'restart', 'backup', "
-                     "'setup', 'probe', 'module', 'module_remove' und 'host'." % action, None)
+                     "Unknown action '%s' -- v15 knows 'update', 'rollback', 'restart', 'backup', "
+                     "'setup', 'probe', 'module', 'module_remove' and 'host'." % action, None)
         return
     _laufender_auftrag = job_id
     try:
         antwort = lauf()
     except Exception:  # noqa: BLE001 -- der Auftrag endet sichtbar, der Dienst laeuft weiter
-        schliesse_ab(job_id, "failed", "Unerwarteter Fehler:\n%s" % traceback.format_exc(), None)
+        schliesse_ab(job_id, "failed", "Unexpected error:\n%s" % traceback.format_exc(), None)
         return
     finally:
         _laufender_auftrag = None
@@ -1391,7 +1410,7 @@ def bearbeite(auftrag):
     status = ("held" if code == EXIT_ANGEHALTEN and ergebnis and ergebnis.get("halt")
               else ("ok" if code == 0 else "failed"))
     schliesse_ab(job_id, status, text, code, ergebnis)
-    log("Auftrag #%s beendet: %s" % (job_id, status))
+    log("Job #%s finished: %s" % (job_id, status))
 
 
 def eigene_datei_geaendert(stand):
@@ -1403,7 +1422,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v14 gestartet, Abfrage alle %ss" % POLL_SECONDS)
+    log("verwalter.py v15 started, polling every %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()
@@ -1411,9 +1430,9 @@ def main():
                 bearbeite(auftrag)
                 continue
         except Exception:  # noqa: BLE001 -- ein Abfragefehler beendet den Dienst nie
-            log("Fehler bei der Abfrage:\n%s" % traceback.format_exc())
+            log("Polling failed:\n%s" % traceback.format_exc())
         if eigene_datei_geaendert(stand):
-            log("verwalter.py auf der Platte geaendert -- Ende mit Exit 0, systemd startet den neuen Stand.")
+            log("verwalter.py changed on disk -- exiting with 0, systemd starts the new version.")
             return 0
         time.sleep(POLL_SECONDS)
 

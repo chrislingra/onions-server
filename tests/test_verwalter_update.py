@@ -1,4 +1,5 @@
-"""tests/test_verwalter_update.py -- Verwalter v14: Update mit Lizenzpruefung und Rueckweg.
+"""tests/test_verwalter_update.py -- Verwalter v15: Update mit Lizenzpruefung und Rueckweg (seit v14;
+seit v15 prueft der Test die englische Ausgabe).
 
 Aufruf (aus tests/selftest.sh):  python tests/test_verwalter_update.py <verwalter.py> <tmp>
 Exit 0 = alles bestanden, sonst ein AssertionError mit dem Befund.
@@ -240,7 +241,7 @@ assert [e["stand"] for e in erg["lizenzen"]] == ["unveraendert"] and "text" not 
 ordner = erg["ruecksicherung"]
 manifest = json.load(open(os.path.join(ordner, "manifest.json"), encoding="utf-8"))
 assert manifest["geaendert"] == ["app"] and [s["art"] for s in manifest["sicherungen"]] == ["bind", "volume"], manifest
-assert "nur lesend eingebunden" in text and "/var/run/docker.sock" in text, text
+assert "mounted read-only" in text and "/var/run/docker.sock" in text, text
 assert ZUSTAND["container"]["app"]["abbild"] == "sha256:A2"
 assert ZUSTAND["namen"] == {"onions-rueckweg:demo-a12-1": "sha256:A1"}, ZUSTAND["namen"]
 
@@ -249,7 +250,7 @@ schreibe(os.path.join(DATEN, "a.txt"), "neu")
 schreibe(os.path.join(DATEN, "b.txt"), "nur neu")
 schreibe(os.path.join(VOLUME, "db.txt"), "neu-db")
 text, code, erg = v.fuehre_rueckweg_aus(13, "demo", DIENST, "docker-compose.yml", '{"update_job": 99}')
-assert code == 1 and "kein Rueckweg" in text, text
+assert code == 1 and "no way back" in text, text
 text, code, erg = v.fuehre_rueckweg_aus(13, "demo", DIENST, "docker-compose.yml", '{"update_job": 12}')
 assert code == 0, text
 assert lies(os.path.join(DATEN, "a.txt")) == "alt" and not os.path.exists(os.path.join(DATEN, "b.txt"))
@@ -275,7 +276,7 @@ assert len(os.listdir(os.path.join(v.RUECKWEG_WURZEL, "demo", v.RUECKWEG_BLATT))
 
 # 6. nichts Neues -> nichts gesichert, nichts neu gestartet
 text, code, erg = v.fuehre_update_aus(16, "demo", DIENST, "docker-compose.yml")
-assert code == 0 and "ruecksicherung" not in erg and "nichts gesichert" in text, text
+assert code == 0 and "ruecksicherung" not in erg and "nothing backed up" in text, text
 
 # 7. bearbeite: held als Status, rollback kennt er
 abgeschlossen = []
@@ -299,4 +300,4 @@ assert not w._bind_zulaessig("/var/run/docker.sock")
 assert not w._bind_zulaessig("/opt/backups/openwebui/sicherung")
 assert not w._bind_zulaessig("/opt/onions.one/reports")
 assert not w._bind_zulaessig("/opt/../etc/passwd")
-print("Verwalter v14: 8 Faelle bestanden")
+print("Verwalter v15: 8 cases passed")
