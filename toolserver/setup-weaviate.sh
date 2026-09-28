@@ -42,6 +42,10 @@ IFS=$'\n\t'
 #      when it has none, and the catalogue marks Weaviate installed (toolserver-link.sh).
 #      Until now the key had to be typed in by hand.
 #   3. Texts in English, like the whole installer.
+#
+# 2026-09-28 (GAP-ENV-DIENSTE-TELEMETRIE-01): DISABLE_TELEMETRY=true. Weaviate reports to its
+# publisher every 24 hours by default (machine id, version, operating system, modules, object
+# and collection counts, cloud metadata) -- a customer's server passes nothing to a third party.
 # =============================================================================
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -191,6 +195,8 @@ services:
       GOMEMLIMIT: "4GiB"
       LIMIT_RESOURCES: "false"
       PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      # No reports to the publisher (on by default, every 24 hours)
+      DISABLE_TELEMETRY: "true"
       # Authentication: API key
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
       AUTHENTICATION_APIKEY_ENABLED: "true"
