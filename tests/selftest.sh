@@ -354,6 +354,15 @@ assert "ausgelassen" in p and v._protokoll("kurz") == "kurz" and v._protokoll(No
 PY
 }
 check "Verwalter v13: the whole log reaches the job row, cut only past a safety limit" _t_verwalter_protokoll
+# v14 (operator 2026-09-28): an update checks the licence of every new image before anything
+# starts, keeps the old state (data + old image) and can put it back -- Watchtower is gone
+_t_verwalter_rueckweg() {
+    mkdir -p "$TMP/v14"
+    "$(command -v python3 || command -v python)" "$ROOT/tests/test_verwalter_update.py" \
+        "$ROOT/toolserver/verwalter.py" "$TMP/v14" >/dev/null
+}
+check "Verwalter v14: update halts on a new licence, keeps a way back, rollback restores" _t_verwalter_rueckweg
+check "Verwalter v14 writes the job's result"         grep -q "result = '%s'::jsonb" "$ROOT/toolserver/verwalter.py"
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh
