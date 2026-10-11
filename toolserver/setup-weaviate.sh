@@ -46,6 +46,14 @@ IFS=$'\n\t'
 # 2026-09-28 (GAP-ENV-DIENSTE-TELEMETRIE-01): DISABLE_TELEMETRY=true. Weaviate reports to its
 # publisher every 24 hours by default (machine id, version, operating system, modules, object
 # and collection counts, cloud metadata) -- a customer's server passes nothing to a third party.
+#
+# 2026-10-11 (GAP-KNW-BILDBESCHREIBUNG-QUALITAET-01, point 11a): CLIP with a multilingual text
+# encoder -- sentence-transformers-clip-ViT-B-32-multilingual-v1 instead of ...-clip-ViT-B-32.
+# The English text encoder read a German query ("Strangpresswerkzeug") as noise. The image
+# encoder is the same ViT-B-32, and the multilingual text encoder is trained into the same
+# vector space, so the stored vectors stay valid -- no rebuild of the classes. Costs some
+# 300-500 MB more memory in the multi2vec-clip container (measured headroom on the host:
+# over 2.5 GB free in 1972 of 1973 samples of the last 7 days).
 # =============================================================================
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -241,10 +249,10 @@ services:
   # ---------------------------------------------------------------------------
   # multi2vec-clip -- CLIP model for image and text embeddings
   # Internal: http://multi2vec-clip:8080
-  # Model: ViT-B-32 (512 dimensions, CPU)
+  # Model: ViT-B-32 (512 dimensions, CPU), multilingual text encoder (2026-10-11)
   # ---------------------------------------------------------------------------
   multi2vec-clip:
-    image: cr.weaviate.io/semitechnologies/multi2vec-clip:sentence-transformers-clip-ViT-B-32
+    image: cr.weaviate.io/semitechnologies/multi2vec-clip:sentence-transformers-clip-ViT-B-32-multilingual-v1
     container_name: multi2vec-clip
     restart: always
     expose: ["8080"]
