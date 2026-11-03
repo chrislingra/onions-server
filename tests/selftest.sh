@@ -363,6 +363,14 @@ _t_verwalter_rueckweg() {
 }
 check "Verwalter v14: update halts on a new licence, keeps a way back, rollback restores" _t_verwalter_rueckweg
 check "Verwalter v14 writes the job's result"         grep -q "result = '%s'::jsonb" "$ROOT/toolserver/verwalter.py"
+# v16 (GAP-ENV-UPDATES-GITHUB-QUELLE-01): a release tag of the publisher -- the missing patches
+# from the history with the publisher's checksum, database before program, then deploy.sh
+_t_verwalter_release() {
+    mkdir -p "$TMP/v16"
+    "$(command -v python3 || command -v python)" "$ROOT/tests/test_verwalter_release.py" \
+        "$ROOT/toolserver/verwalter.py" "$ROOT/toolserver/toolserver-quelle.sh" "$TMP/v16" >/dev/null
+}
+check "Verwalter v16: a release tag brings the publisher's patches and program" _t_verwalter_release
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh

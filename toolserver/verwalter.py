@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v15)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v16)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -92,6 +92,9 @@ WAS ER KANN (die feste Liste, Stand v8)
              Update, steht in params ({"update_job": <id>}). Siehe UPDATE MIT
              LIZENZPRUEFUNG UND RUECKWEG.
 
+    release  (v16, 2026-11-03) einen Stand des Herstellers einspielen: die Marke
+             vNNNN steht in target. Siehe EIN STAND DES HERSTELLERS.
+
     Fuer backup, setup und probe gilt dasselbe: kein Skript im Katalog, ein
     absoluter Pfad, ein ".." oder eine Datei, die es nicht gibt -- der
     Auftrag endet sichtbar als failed, es wird nichts geraten. Aufgerufen
@@ -179,6 +182,29 @@ rollback spielt einen solchen Rueckweg zurueck -- und haelt vorher den Stand, de
 er ersetzt, im selben Ordner fest (vor-rueckweg-<stempel>/): auch der Rueckweg
 laesst sich zuruecknehmen.
 
+EIN STAND DES HERSTELLERS (v16, 2026-11-03, GAP-ENV-UPDATES-GITHUB-QUELLE-01 Stufe 2).
+Bediener 2026-11-01: der Updatestatus kommt ueber die Lizenzpruefung -- seit
+Toolserver v3574 nennt die Antwort des Lizenzdienstes den Stand des Herstellers,
+Environment > Installation > Updates > Toolserver zeigt "Update available", und
+der Knopf dort schreibt diesen Auftrag. Nur der Bestandteil toolserver, nur auf
+einem Server des Installers (Arbeitskopie QUELL_KOPIE), nie beim Hersteller
+selbst (Paket lingra installiert). In dieser Reihenfolge:
+    1. holen und pruefen, ohne etwas zu aendern: die Marken holen; die Marke muss
+       auf dem Zweig liegen, dem die Arbeitskopie folgt (master), und neuer sein
+       als ihr Stand. Der Startabzug der Marke (db/schema_seed.sql) nennt die
+       Patches, die der Hersteller angewandt hat, mit Dateiname und sha256;
+       fehlt einer hier, kommt er aus der Geschichte -- der Nachlauf nimmt eine
+       angewandte Patchdatei aus dem Baum, in der Geschichte bleibt jede
+       Fassung. Genommen wird nur die Fassung mit der sha256 des Herstellers;
+       findet sich eine nicht, endet der Auftrag, bevor etwas geaendert ist;
+    2. Datenbank vor Programm: jedes fehlende Paket fuer sich, aufsteigend,
+       dbmigrate.sh probe --to <n>, dann apply --to <n>; scheitert eines, bleibt
+       das Programm, wie es ist;
+    3. Programm: die Arbeitskopie auf die Marke, ihre Stufen neu gesetzt (Kern
+       und die installierten Erweiterungen, tsq_setzen), nach /opt/toolserver
+       kopiert -- ohne db/patches/, dort liegen nur die geprueften Pakete --,
+       dann deploy.sh mit seinen eigenen Pruefungen.
+
 AUSGABE ENGLISCH (v15, 2026-09-28): jede Ausgabe englisch -- Protokoll, Gruende,
 Hinweise, Journal (Bediener: "jeglicher output ist en"). Schluessel und Werte des
 Ergebnisses bleiben (art, stand, halt, herkunft, ruecksicherung ...), der Toolserver
@@ -258,6 +284,13 @@ MODUL_SKRIPT = "setup-module.sh"
 #: Das Gegenstueck (Aktion module_remove, v12).
 MODUL_ENTFERNEN_SKRIPT = "remove-module.sh"
 MODUL_KEY = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
+#: Einen Stand des Herstellers einspielen (Aktion release, v16): die Marke vNNNN, die
+#: Arbeitskopie des Toolservers und das Stufenverzeichnis des Installers -- auf jedem
+#: Server derselbe Ort (toolserver/setup-module.sh nimmt dieselben).
+FREIGABE_MARKE = re.compile(r"^v[0-9]{3,6}$")
+QUELL_KOPIE = "/opt/onions-server/src/onions-toolserver"
+STUFEN_SKRIPT = "/opt/onions-server/lib/stufen.py"
+QUELLE_SKRIPT = os.path.join(AUFBAU_DIR, "toolserver-quelle.sh")
 #: Die Arbeiten am Server (Aktion host) -- dieselbe Liste wie in host-task.sh und in
 #: services/svc_hostaufgaben.py des Toolservers. Wert: die Angaben, die sie braucht.
 HOST_SKRIPT = "host-task.sh"
@@ -1260,6 +1293,196 @@ def fuehre_modul_aus(datei, key):
     return _schritte_ausfuehren([["bash", datei, key]], AUFBAU_DIR, AUFBAU_TIMEOUT)
 
 
+def _git(argumente, binaer=False, timeout=ZIEH_TIMEOUT):
+    """(code, stdout, stderr) eines git-Aufrufs in der Arbeitskopie, festes argv."""
+    r = subprocess.run(["git", "-C", QUELL_KOPIE] + argumente, capture_output=True,
+                       text=not binaer, env=_git_umgebung(), timeout=timeout)
+    fehler = r.stderr if not binaer else r.stderr.decode("utf-8", "replace")
+    return r.returncode, r.stdout, fehler
+
+
+def _git_umgebung():
+    """Hinter dem Verwalter sitzt kein Terminal: git scheitert, statt zu fragen."""
+    return dict(os.environ, GIT_TERMINAL_PROMPT="0",
+                GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+
+
+def _startabzug_staende(seed):
+    """{nummer: (datei, sha256)} -- die angewandten Patches, wie der Startabzug
+    (db/schema_seed.sql) des Herstellers sie in public.schema_version nennt."""
+    staende, spalten = {}, None
+    for zeile in seed.splitlines():
+        if spalten is None:
+            if zeile.startswith("COPY public.schema_version ("):
+                spalten = [s.strip() for s in zeile.split("(", 1)[1].split(")", 1)[0].split(",")]
+            continue
+        if zeile == "\\.":
+            break
+        werte = dict(zip(spalten, zeile.split("\t")))
+        try:
+            nummer = int(werte.get("version", ""))
+        except ValueError:
+            continue
+        datei = werte.get("filename", "")
+        sha = werte.get("sha256", "")
+        staende[nummer] = ("" if datei == "\\N" else datei, "" if sha == "\\N" else sha)
+    return staende
+
+
+def _patch_blobs(commit):
+    """{dateiname: [blob, ...]} -- jede Fassung jeder Datei unter db/patches/, die
+    bis zu commit je in der Geschichte lag. Der Nachlauf nimmt eine angewandte
+    Patchdatei aus dem Baum (patch_cleanup); in der Geschichte bleibt sie."""
+    code, aus, fehler = _git(["log", commit, "--full-history", "--no-renames", "--format=",
+                              "--raw", "--no-abbrev", "--", "db/patches/"])
+    if code != 0:
+        raise _Abbruch("git log failed: %s" % fehler.strip())
+    blobs = {}
+    for zeile in aus.splitlines():
+        if not zeile.startswith(":") or "\t" not in zeile:
+            continue
+        kopf, pfad = zeile.split("\t", 1)
+        teile = kopf.split()
+        if len(teile) < 4 or not pfad.startswith("db/patches/") or "/" in pfad[len("db/patches/"):]:
+            continue
+        name = pfad[len("db/patches/"):]
+        for blob in (teile[2], teile[3]):
+            if blob.strip("0") and blob not in blobs.setdefault(name, []):
+                blobs[name].append(blob)
+    return blobs
+
+
+def _patch_fassung(blobs, sha):
+    """Die Fassung, deren sha256 die des Herstellers ist -- sonst None."""
+    for blob in blobs:
+        code, daten, _ = _git(["cat-file", "blob", blob], binaer=True)
+        if code == 0 and hashlib.sha256(daten).hexdigest() == sha:
+            return daten
+    return None
+
+
+def pruefe_freigabe(kind, target):
+    """(marke, grund) -- einen Stand des Herstellers holt nur der Bestandteil
+    Toolserver, nur mit einer Marke vNNNN, nur auf einem Server, den der
+    Installer aufgebaut hat, und nie beim Hersteller selbst."""
+    if kind != TOOLSERVER_KIND:
+        return "", "A release belongs to the Toolserver, not to a component of kind '%s'." % kind
+    marke = (target or "").strip()
+    if not FREIGABE_MARKE.match(marke):
+        return "", "Invalid release tag '%s' -- expected v followed by the patch number." % marke
+    for pfad in (os.path.join(QUELL_KOPIE, ".git"), STUFEN_SKRIPT, QUELLE_SKRIPT,
+                 os.path.join(TOOLSERVER_DIR, "dbmigrate.sh"), os.path.join(TOOLSERVER_DIR, "deploy.sh")):
+        if not os.path.exists(pfad):
+            return "", "%s not found -- this server was not set up by the installer." % pfad
+    if psql_read("SELECT 1 FROM public.platform_modules WHERE key = 'lingra' AND installed"):
+        return "", ("This server is the publisher (it carries the licence service): its state "
+                    "comes from the delivery, not from a release tag.")
+    return marke, ""
+
+
+def fuehre_freigabe_aus(marke):
+    """Den Stand vNNNN des Herstellers einspielen (v16). Erst wird alles geholt und
+    geprueft, dann geaendert: Datenbank vor Programm, wie bei jeder Lieferung."""
+    text = []
+    nummer = int(marke[1:])
+    ergebnis = {"art": "release", "marke": marke, "angewandt": []}
+
+    def schritt(argv, verzeichnis, timeout=BAU_TIMEOUT, umgebung=None):
+        text.append("$ %s   (in %s)" % (" ".join(argv), verzeichnis))
+        code = _schritt_ausfuehren(argv, verzeichnis, timeout, umgebung, text)
+        text.append("exit %s" % code)
+        return code == 0
+
+    def ende(grund, code=1):
+        text.append(grund)
+        return "\n".join(text), code, ergebnis
+
+    try:
+        # 1. Holen und pruefen -- auf der Platte aendert sich nichts.
+        if not schritt(["git", "-C", QUELL_KOPIE, "fetch", "--tags", "origin"], AUFBAU_DIR,
+                       ZIEH_TIMEOUT, _git_umgebung()):
+            return ende("The tags could not be fetched from the repository -- nothing changed.")
+        code, commit, _ = _git(["rev-parse", "--verify", "-q", "refs/tags/%s^{commit}" % marke])
+        if code != 0:
+            return ende("The repository has no tag %s -- nothing changed." % marke)
+        commit = commit.strip()
+        code, zweig, _ = _git(["symbolic-ref", "--short", "HEAD"])
+        code2, oben, _ = _git(["rev-parse", "--abbrev-ref", "%s@{upstream}" % zweig.strip()])
+        if code or code2:
+            return ende("The working copy %s follows no branch -- nothing changed." % QUELL_KOPIE)
+        zweig, oben = zweig.strip(), oben.strip()
+        if _git(["merge-base", "--is-ancestor", commit, oben])[0] != 0:
+            return ende("%s is not on %s -- only released states are installed; nothing changed."
+                        % (marke, oben))
+        if _git(["merge-base", "--is-ancestor", commit, "HEAD"])[0] == 0:
+            return ende("%s is not newer than the state of this server -- nothing changed." % marke, 0)
+        code, seed, fehler = _git(["show", "%s:db/schema_seed.sql" % commit], timeout=BAU_TIMEOUT)
+        if code != 0:
+            return ende("%s carries no start dump: %s -- nothing changed." % (marke, fehler.strip()))
+        staende = _startabzug_staende(seed)
+        if nummer not in staende:
+            return ende("The start dump of %s does not name patch %d as applied -- nothing changed."
+                        % (marke, nummer))
+        hier = {int(z[0]) for z in psql_read("SELECT version FROM public.schema_version")}
+        fehlend = sorted(set(staende) - hier)
+        text.append("%s: %d patch(es) of the publisher are missing here: %s"
+                    % (marke, len(fehlend), ", ".join("v%d" % n for n in fehlend) or "none"))
+        blobs = _patch_blobs(commit)
+        dateien = []
+        for n in fehlend:
+            name, sha = staende[n]
+            daten = _patch_fassung(blobs.get(name, []), sha) if name and sha else None
+            if daten is None:
+                return ende("v%d (%s): no version in the history matches the publisher's checksum "
+                            "-- nothing changed." % (n, name or "no file name recorded"))
+            ziel = os.path.join(TOOLSERVER_DIR, "db", "patches", name)
+            if os.path.exists(ziel):
+                with open(ziel, "rb") as f:
+                    if hashlib.sha256(f.read()).hexdigest() != sha:
+                        return ende("%s lies here with other content than the publisher's -- "
+                                    "nothing changed." % ziel)
+            dateien.append((n, ziel, daten))
+        text.append("Every missing patch was found with the publisher's checksum.")
+
+        # 2. Datenbank: jedes Paket fuer sich, aufsteigend, erst probe, dann apply.
+        os.makedirs(os.path.join(TOOLSERVER_DIR, "db", "patches"), exist_ok=True)
+        for n, ziel, daten in dateien:
+            with open(ziel, "wb") as f:
+                f.write(daten)
+        for n, ziel, daten in dateien:
+            for art in ("probe", "apply"):
+                if not schritt(["bash", "dbmigrate.sh", art, "--to", str(n)], TOOLSERVER_DIR):
+                    ergebnis["halt"] = n
+                    return ende("v%d failed in %s -- the program was not changed; the patches "
+                                "before it are applied." % (n, art))
+            ergebnis["angewandt"].append(n)
+
+        # 3. Programm: die Arbeitskopie auf die Marke, ihre Stufen neu, dann kopieren und
+        #    neu starten (deploy.sh prueft vorher selbst).
+        if not schritt(["git", "-C", QUELL_KOPIE, "checkout", "-q", "-B", zweig, commit], AUFBAU_DIR,
+                       ZIEH_TIMEOUT, _git_umgebung()):
+            return ende("The working copy could not be set to %s -- the database is at the new "
+                        "state, the program is not." % marke)
+        erweiterungen = [z[0] for z in psql_read(
+            "SELECT key FROM public.platform_modules WHERE installed AND tier = 'addon' "
+            "ORDER BY sort_order, key")]
+        if not schritt(["bash", "-c", '. "$0" && tsq_setzen "$@"', QUELLE_SKRIPT, QUELL_KOPIE,
+                        STUFEN_SKRIPT, "base"] + erweiterungen, AUFBAU_DIR, ZIEH_TIMEOUT, _git_umgebung()):
+            return ende("The files of %s could not be selected -- the program was not changed." % marke)
+        if not schritt(["rsync", "-a", "--exclude=.git", "--exclude=volumes/", "--exclude=secrets/",
+                        "--exclude=.env", "--exclude=__pycache__", "--exclude=*.pyc",
+                        "--exclude=db/patches/", QUELL_KOPIE + "/", TOOLSERVER_DIR + "/"], AUFBAU_DIR):
+            return ende("Copying the files of %s failed." % marke)
+        if not schritt(["bash", os.path.join(TOOLSERVER_DIR, "deploy.sh")], TOOLSERVER_DIR):
+            return ende("deploy.sh refused or failed -- see above.")
+        if not psql_read("SELECT 1 FROM public.schema_version WHERE version = %d" % nummer):
+            return ende("After the restart patch %d is not recorded as applied." % nummer)
+        ergebnis["stand"] = nummer
+        return ende("This server is at %s." % marke, 0)
+    except _Abbruch as exc:
+        return ende("%s -- nothing changed." % exc)
+
+
 def pruefe_hostauftrag(target, params_text):
     """(Datei, Umgebung, Grund) -- die Arbeit muss in HOST_ARBEITEN stehen, ihre Werte
     die Form haben, die der Toolserver schon geprueft hat. Alles andere wird benannt,
@@ -1385,6 +1608,12 @@ def bearbeite(auftrag):
             schliesse_ab(job_id, "failed", grund, None)
             return
         lauf = lambda: fuehre_modul_aus(datei, target.strip())  # noqa: E731
+    elif action == "release":
+        marke, grund = pruefe_freigabe(kind, target)
+        if grund:
+            schliesse_ab(job_id, "failed", grund, None)
+            return
+        lauf = lambda: fuehre_freigabe_aus(marke)  # noqa: E731
     elif action == "host":
         datei, umgebung, grund = pruefe_hostauftrag(target, params_text)
         if grund:
@@ -1393,8 +1622,8 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v15 knows 'update', 'rollback', 'restart', 'backup', "
-                     "'setup', 'probe', 'module', 'module_remove' and 'host'." % action, None)
+                     "Unknown action '%s' -- v16 knows 'update', 'rollback', 'restart', 'backup', "
+                     "'setup', 'probe', 'module', 'module_remove', 'host' and 'release'." % action, None)
         return
     _laufender_auftrag = job_id
     try:
@@ -1422,7 +1651,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v15 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v16 started, polling every %ss" % POLL_SECONDS)
     while True:
         try:
             auftrag = naechster_auftrag()
