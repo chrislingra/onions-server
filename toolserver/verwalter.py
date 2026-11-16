@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v16)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v17)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -94,6 +94,10 @@ WAS ER KANN (die feste Liste, Stand v8)
 
     release  (v16, 2026-11-03) einen Stand des Herstellers einspielen: die Marke
              vNNNN steht in target. Siehe EIN STAND DES HERSTELLERS.
+
+    os_update (v17, 2026-11-16) die Pakete des Onions-Servers selbst auf den neuen
+             Stand bringen (apt), auf Wunsch mit Neustart des Servers, wenn ein
+             Paket ihn verlangt. Siehe DIE PAKETE DES SERVERS.
 
     Fuer backup, setup und probe gilt dasselbe: kein Skript im Katalog, ein
     absoluter Pfad, ein ".." oder eine Datei, die es nicht gibt -- der
@@ -205,6 +209,35 @@ selbst (Paket lingra installiert). In dieser Reihenfolge:
        kopiert -- ohne db/patches/, dort liegen nur die geprueften Pakete --,
        dann deploy.sh mit seinen eigenen Pruefungen.
 
+DIE PAKETE DES SERVERS (v17, 2026-11-16, Toolserver Environment > Installation >
+Updates > Onions-Server). Bediener 2026-11-16: "das einspielen von updates, auch fuer
+die Plattform, sollte unter environment eingerichtet werden". Die CRA-Stueckliste
+der Plattform fand am Kernel und an Paketen des Servers aktiv ausgenutzte
+Schwachstellen; die Dienste hatten ihren Weg (update), der Server keinen.
+    1. apt-get update, apt-get upgrade --with-new-pkgs (neue Abhaengigkeiten wie ein
+       neuer Kernel kommen mit, nichts wird entfernt), apt-get autoremove --purge
+       (alte Kernel; der laufende bleibt, das macht apt selbst). Ohne Rueckfrage
+       (DEBIAN_FRONTEND=noninteractive, bestehende Konfigurationsdateien bleiben),
+       needrestart startet keine Dienste (NEEDRESTART_SUSPEND=1), und ein Lauf von
+       unattended-upgrades wird abgewartet (DPkg::Lock::Timeout).
+    2. apt laeuft in einer EIGENEN systemd-Einheit (systemd-run), nicht als Kind
+       dieses Dienstes: onions-verwalter.service verlangt docker.service -- bringt das
+       Update eine neue Docker-Engine, haelt systemd mit Docker auch diesen Dienst an,
+       und ein Kind stuerbe mitten in dpkg. Die Einheit laeuft weiter; die Ausgabe
+       steht in OS_UPDATE_LOG, die letzte Zeile ONIONS_OS_UPDATE_EXIT=<code> traegt
+       das Ende. Ein neu gestarteter Verwalter nimmt einen Auftrag, der noch auf
+       running steht, wieder auf (systemupdate_wiederaufnehmen) und folgt derselben
+       Einheit.
+    3. Danach die Abschrift fuer die CRA-Stueckliste, wie deploy.sh sie schreibt:
+       /var/lib/dpkg/status, /etc/os-release und -- neu -- /var/run/reboot-required(.pkgs)
+       nach /opt/toolserver/volumes/host-info. Die Stueckliste sieht den neuen Stand
+       damit beim naechsten Lauf, nicht erst nach dem naechsten Neustart.
+    4. params {"reboot": true} und der Server verlangt einen Neustart: "shutdown -r +1".
+       Der Auftrag ist dann schon ok geschrieben; die Dienste kommen mit ihrer
+       restart-Regel zurueck, dieser Dienst ueber systemd (WantedBy=multi-user.target).
+    Nur fuer den Bestandteil der Art toolserver -- der Server ist einer, und seine
+    Auftraege haengen am Toolserver wie die Arbeiten von host.
+
 AUSGABE ENGLISCH (v15, 2026-09-28): jede Ausgabe englisch -- Protokoll, Gruende,
 Hinweise, Journal (Bediener: "jeglicher output ist en"). Schluessel und Werte des
 Ergebnisses bleiben (art, stand, halt, herkunft, ruecksicherung ...), der Toolserver
@@ -304,6 +337,25 @@ HOST_SCHLUESSEL = re.compile(
     r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]{40,16384}( [A-Za-z0-9._@+:-]{1,100})?$")
 #: Pakete holen und installieren (CrowdSec, rkhunter) darf dauern, aber nicht ewig.
 HOST_TIMEOUT = 1800
+#: v17: die Pakete des Servers (os_update). Ein Kernel und eine Docker-Engine dauern.
+OS_UPDATE_TIMEOUT = 7200
+#: Wie oft und in welchem Abstand das Ende eines Auftrags geschrieben wird (v17).
+SCHLUSS_VERSUCHE = 12
+SCHLUSS_PAUSE = 10
+OS_UPDATE_EINHEIT = "onions-os-update-%d"
+OS_UPDATE_LOG = "/var/log/onions/os-update-%d.log"
+OS_UPDATE_MARKE = "ONIONS_OS_UPDATE_EXIT="
+#: Die Abschrift fuer die CRA-Stueckliste, dieselbe, die deploy.sh schreibt.
+HOST_INFO_DIR = "/opt/toolserver/volumes/host-info"
+NEUSTART_NOETIG = "/var/run/reboot-required"
+#: Der feste Ablauf in der eigenen Einheit -- nichts aus der Datenbank fliesst hinein.
+OS_UPDATE_SKRIPT = (
+    "( set -e; A='-o DPkg::Lock::Timeout=900'; "
+    "echo '== apt-get update'; apt-get -q $A update; "
+    "echo '== apt-get upgrade'; apt-get -q -y $A -o Dpkg::Options::=--force-confdef "
+    "-o Dpkg::Options::=--force-confold --with-new-pkgs upgrade; "
+    "echo '== apt-get autoremove'; apt-get -q -y $A autoremove --purge ); "
+    "echo \"" + OS_UPDATE_MARKE + "$?\"")
 #: Ziehen ist ein Netzzugriff, Bauen ist Arbeit. Deshalb zwei Grenzen.
 ZIEH_TIMEOUT = 900
 BAU_TIMEOUT = 3600
@@ -409,11 +461,21 @@ def schliesse_ab(job_id, status, log_text, exit_code, ergebnis=None):
     zusatz = ""
     if ergebnis is not None:
         zusatz = ", result = '%s'::jsonb" % pg_escape(json.dumps(ergebnis, ensure_ascii=False))
-    psql_write(
-        "UPDATE public.platform_agent_jobs SET status = '%s', finished_at = now(), "
-        "log = '%s', exit_code = %s%s WHERE id = %s;"
-        % (pg_escape(status), pg_escape(_protokoll(log_text)),
-           "NULL" if exit_code is None else int(exit_code), zusatz, int(job_id)))
+    sql = ("UPDATE public.platform_agent_jobs SET status = '%s', finished_at = now(), "
+           "log = '%s', exit_code = %s%s WHERE id = %s;"
+           % (pg_escape(status), pg_escape(_protokoll(log_text)),
+              "NULL" if exit_code is None else int(exit_code), zusatz, int(job_id)))
+    # v17: ein os_update kann die Docker-Engine erneuern -- dann ist die Datenbank fuer
+    # einige Sekunden weg. Das Ende eines Auftrags geht deshalb mehrmals hinaus.
+    for versuch in range(SCHLUSS_VERSUCHE):
+        try:
+            psql_write(sql)
+            return
+        except Exception as exc:  # noqa: BLE001 -- nach dem letzten Versuch sichtbar
+            if versuch == SCHLUSS_VERSUCHE - 1:
+                raise
+            log("End of job #%s not written yet (%s) -- trying again in %s s" % (job_id, exc, SCHLUSS_PAUSE))
+            time.sleep(SCHLUSS_PAUSE)
 
 
 def _zwischenstand(log_text):
@@ -1552,6 +1614,138 @@ def fuehre_hostarbeit_aus(datei, arbeit, umgebung):
     return "\n".join(text), r.returncode
 
 
+def _os_update_starten(job_id):
+    """Die Einheit starten (v17). Laeuft sie schon -- ein neu gestarteter Verwalter
+    folgt ihr --, wird keine zweite gestartet. Gibt (Logdatei, Grund) zurueck."""
+    einheit = OS_UPDATE_EINHEIT % int(job_id)
+    datei = OS_UPDATE_LOG % int(job_id)
+    aktiv = subprocess.run(["systemctl", "is-active", "--quiet", einheit]).returncode == 0
+    if aktiv or os.path.isfile(datei):
+        return datei, ""
+    os.makedirs(os.path.dirname(datei), exist_ok=True)
+    r = subprocess.run(
+        ["systemd-run", "--unit", einheit, "--collect", "--quiet",
+         "--setenv=DEBIAN_FRONTEND=noninteractive", "--setenv=NEEDRESTART_SUSPEND=1",
+         "--property=StandardOutput=append:" + datei, "--property=StandardError=append:" + datei,
+         "/bin/bash", "-c", OS_UPDATE_SKRIPT],
+        capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        return datei, "systemd-run failed: %s" % (r.stderr or r.stdout).strip()[-400:]
+    return datei, ""
+
+
+def _lesen(datei):
+    try:
+        with open(datei, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _os_update_folgen(job_id, datei):
+    """Der Einheit folgen, bis ihre Ausgabe die Endmarke traegt. (text, exit_code)."""
+    frist = time.monotonic() + OS_UPDATE_TIMEOUT
+    gemeldet = -1
+    einheit = OS_UPDATE_EINHEIT % int(job_id)
+    while True:
+        text = _lesen(datei)
+        for zeile in reversed(text.splitlines()):
+            if zeile.startswith(OS_UPDATE_MARKE):
+                try:
+                    return text, int(zeile[len(OS_UPDATE_MARKE):].strip() or 1)
+                except ValueError:
+                    return text, 1
+        laeuft = subprocess.run(["systemctl", "is-active", "--quiet", einheit]).returncode == 0
+        if not laeuft:
+            time.sleep(2)
+            text = _lesen(datei)
+            if OS_UPDATE_MARKE not in text:
+                return text + "\nThe update unit %s ended without its end mark." % einheit, 1
+            continue
+        if time.monotonic() >= frist:
+            return text + "\nTime limit reached: %s still runs after %s s; it is left running." % (
+                einheit, OS_UPDATE_TIMEOUT), 1
+        if len(text) != gemeldet:
+            gemeldet = len(text)
+            _zwischenstand(text)
+        time.sleep(ZWISCHENSTAND_SEKUNDEN)
+
+
+def _abschrift_fuer_cra():
+    """dpkg-status, os-release und die Neustartvermerke nach HOST_INFO_DIR (v17) --
+    dieselben Namen wie deploy.sh. Gibt eine Zeile fuers Protokoll zurueck."""
+    try:
+        os.makedirs(HOST_INFO_DIR, exist_ok=True)
+        shutil.copyfile("/var/lib/dpkg/status", os.path.join(HOST_INFO_DIR, "dpkg-status"))
+        shutil.copyfile("/etc/os-release", os.path.join(HOST_INFO_DIR, "os-release"))
+        for name in ("reboot-required", "reboot-required.pkgs"):
+            quelle, ziel = "/var/run/" + name, os.path.join(HOST_INFO_DIR, name)
+            if os.path.isfile(quelle):
+                shutil.copyfile(quelle, ziel)
+            elif os.path.exists(ziel):
+                os.remove(ziel)
+        return "Host package list copied to %s for the CRA SBOM." % HOST_INFO_DIR
+    except OSError as exc:
+        return "Host package list NOT copied to %s: %s" % (HOST_INFO_DIR, exc)
+
+
+def _aktualisierte(text):
+    """Die Pakete, die apt eingerichtet hat ("Setting up name (version)")."""
+    pakete = []
+    for zeile in text.splitlines():
+        m = re.match(r"^Setting up (\S+) \(([^)]*)\)", zeile.strip())
+        if m:
+            pakete.append("%s %s" % (m.group(1).split(":")[0], m.group(2)))
+    return pakete
+
+
+def fuehre_systemupdate_aus(job_id, params_text):
+    """os_update (v17): apt in eigener Einheit, die Abschrift, auf Wunsch der Neustart."""
+    try:
+        werte = json.loads(params_text or "{}") or {}
+    except ValueError:
+        werte = {}
+    neustart_gewuenscht = werte.get("reboot") is True
+    datei, grund = _os_update_starten(job_id)
+    if grund:
+        return grund, 1
+    text, code = _os_update_folgen(job_id, datei)
+    zeilen = [text.rstrip(), _abschrift_fuer_cra()]
+    noetig = os.path.isfile(NEUSTART_NOETIG)
+    pakete_neustart = [z.strip() for z in _lesen(NEUSTART_NOETIG + ".pkgs").splitlines() if z.strip()]
+    kernel = subprocess.run(["uname", "-r"], capture_output=True, text=True).stdout.strip()
+    neustart = "nicht_noetig"
+    if noetig and code == 0 and neustart_gewuenscht:
+        r = subprocess.run(["shutdown", "-r", "+1", "onions: restart after the package update (job #%s)" % job_id],
+                           capture_output=True, text=True)
+        neustart = "geplant" if r.returncode == 0 else "fehlgeschlagen"
+        zeilen.append("Restart of the server %s." % ("scheduled in one minute" if r.returncode == 0
+                                                       else "NOT scheduled: %s" % (r.stderr or r.stdout).strip()))
+    elif noetig:
+        neustart = "ausstehend"
+        zeilen.append("The server asks for a restart (%s); it was not restarted." % (", ".join(pakete_neustart) or "no package named"))
+    ergebnis = {"art": "os_update", "pakete": _aktualisierte(text), "neustart": neustart,
+                "neustart_pakete": pakete_neustart, "kernel_laeuft": kernel}
+    return "\n".join(zeilen), code, ergebnis
+
+
+def systemupdate_wiederaufnehmen():
+    """Ein os_update, das noch auf running steht, gehoert zu einem Verwalter, den systemd
+    angehalten hat (v17). Seine Einheit lief weiter -- ihr folgen und abschliessen."""
+    global _laufender_auftrag
+    for zeile in psql_read("SELECT id, COALESCE(params::text, '{}') FROM public.platform_agent_jobs "
+                           "WHERE action = 'os_update' AND status = 'running' ORDER BY id"):
+        job_id, params_text = int(zeile[0]), zeile[1]
+        log("Job #%s: os_update was running when this service stopped -- following it again" % job_id)
+        _laufender_auftrag = job_id
+        try:
+            antwort = fuehre_systemupdate_aus(job_id, params_text)
+        finally:
+            _laufender_auftrag = None
+        schliesse_ab(job_id, "ok" if antwort[1] == 0 else "failed", antwort[0], antwort[1],
+                     antwort[2] if len(antwort) > 2 else None)
+
+
 def bearbeite(auftrag):
     global _laufender_auftrag
     (job_id, component_key, action, service_dir, compose_file, kind,
@@ -1620,10 +1814,17 @@ def bearbeite(auftrag):
             schliesse_ab(job_id, "failed", grund, None)
             return
         lauf = lambda: fuehre_hostarbeit_aus(datei, target.strip(), umgebung)  # noqa: E731
+    elif action == "os_update":
+        if kind != TOOLSERVER_KIND:
+            schliesse_ab(job_id, "failed", "The server's packages are updated through the Toolserver "
+                         "component, not through '%s'." % component_key, None)
+            return
+        lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v16 knows 'update', 'rollback', 'restart', 'backup', "
-                     "'setup', 'probe', 'module', 'module_remove', 'host' and 'release'." % action, None)
+                     "Unknown action '%s' -- v17 knows 'update', 'rollback', 'restart', 'backup', "
+                     "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
+                     % action, None)
         return
     _laufender_auftrag = job_id
     try:
@@ -1651,9 +1852,13 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v16 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v17 started, polling every %ss" % POLL_SECONDS)
+    aufgenommen = False
     while True:
         try:
+            if not aufgenommen:
+                systemupdate_wiederaufnehmen()
+                aufgenommen = True
             auftrag = naechster_auftrag()
             if auftrag:
                 bearbeite(auftrag)

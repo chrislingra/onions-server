@@ -371,6 +371,14 @@ _t_verwalter_release() {
         "$ROOT/toolserver/verwalter.py" "$ROOT/toolserver/toolserver-quelle.sh" "$TMP/v16" >/dev/null
 }
 check "Verwalter v16: a release tag brings the publisher's patches and program" _t_verwalter_release
+# v17 (operator 2026-11-16): the host's own packages from the interface -- apt in its own
+# systemd unit, the copy for the CRA SBOM, a restart only on request
+_t_verwalter_systemupdate() {
+    mkdir -p "$TMP/v17"
+    "$(command -v python3 || command -v python)" "$ROOT/tests/test_verwalter_systemupdate.py" \
+        "$ROOT/toolserver/verwalter.py" "$TMP/v17" >/dev/null
+}
+check "Verwalter v17: os_update runs apt in its own unit, copies the package list, restarts on request" _t_verwalter_systemupdate
 _t_host_platz() { [[ -s "$ROOT/toolserver/host-task.sh" && " ${SETUP_SCRIPTS[*]} " == *" host-task.sh "* ]]; }
 check "step 7 places host-task.sh next to the Verwalter" _t_host_platz
 # the task list is the same in the Verwalter and in host-task.sh
