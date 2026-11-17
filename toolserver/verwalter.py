@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v18)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v19)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -1019,6 +1019,16 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
         for e in liste:
             _archiv_schreiben(e, ordner, text)
         alte = sorted({x for x in list(vorher.values()) + [(alt.get(d) or {}).get("abbild") for d in geaendert] if x})
+        # v19 (2026-11-17, Auftrag #1603 graphify): der Container nennt sein Abbild unter einer
+        # Kennung, die docker nicht mehr kennt (seit Docker 29.10 mit dem containerd-Speicher die
+        # Kennung der Konfiguration, nicht die des Abbilds). Den Rueckweg traegt namen_vorher --
+        # die Kennung, auf die der Name vorher zeigte, ist gelesen und bleibt erhalten. Eine
+        # unbekannte Container-Kennung wird darum uebersprungen und genannt, nicht zum Abbruch.
+        bekannt = set(vorher.values())
+        for kennung in [k for k in alte if k not in bekannt and _abbild(k) is None]:
+            text.append("NOTE: a container names image %s, which docker no longer knows under that id; "
+                        "the way back keeps the image its name pointed to before." % kennung)
+            alte.remove(kennung)
         for i, kennung in enumerate(alte):
             name = "%s:%s-a%d-%d" % (RUECKWEG_NAME, key, int(job_id), i + 1)
             if _lauf(text, ["docker", "tag", kennung, name], "/", 60) != 0:
@@ -1860,7 +1870,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v18 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v19 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -1890,7 +1900,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v18 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v19 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:

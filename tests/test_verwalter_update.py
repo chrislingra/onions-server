@@ -87,7 +87,12 @@ class Antwort:
         self.returncode, self.stdout, self.stderr = code, out, "" if code == 0 else "Error: " + out
 
 
+GEISTER = set()   # v19: Kennungen, die docker nicht mehr kennt
+
+
 def kennung(name):
+    if name in GEISTER:
+        return None
     if name.startswith("sha256:"):
         return name
     return ZUSTAND["abbilder"].get(name) or ZUSTAND["namen"].get(name)
@@ -133,6 +138,8 @@ def docker(argv):
         ZUSTAND["namen"].pop(a[2], None)
         return 0, "Untagged"
     if a[:1] == ["tag"]:
+        if not kennung(a[1]):
+            return 1, "Error response from daemon: No such image: %s" % a[1]
         ziel = ZUSTAND["namen"] if a[2].startswith(v.RUECKWEG_NAME + ":") else ZUSTAND["abbilder"]
         ziel[a[2]] = kennung(a[1])
         return 0, ""
@@ -300,4 +307,15 @@ assert not w._bind_zulaessig("/var/run/docker.sock")
 assert not w._bind_zulaessig("/opt/backups/openwebui/sicherung")
 assert not w._bind_zulaessig("/opt/onions.one/reports")
 assert not w._bind_zulaessig("/opt/../etc/passwd")
-print("Verwalter v15: 8 cases passed")
+# 9. (v19) der Container nennt eine Kennung, die docker nicht mehr kennt -> das Update laeuft
+ZUSTAND["etiketten"]["sha256:A6"] = "rev4"
+ZUSTAND["registry"]["demo/app:latest"] = "sha256:A6"
+text, code, erg = v.fuehre_update_aus(19, "demo", DIENST, "docker-compose.yml")
+if code == v.EXIT_ANGEHALTEN:
+    annehmen(erg)
+ZUSTAND["container"]["app"]["abbild"] = "sha256:CFG-GONE"
+GEISTER.add("sha256:CFG-GONE")
+text, code, erg = v.fuehre_update_aus(20, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and "no longer knows under that id" in text and "ruecksicherung" in erg, text
+assert ZUSTAND["container"]["app"]["abbild"] == "sha256:A6", ZUSTAND["container"]
+print("Verwalter v19: 9 cases passed")
