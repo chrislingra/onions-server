@@ -703,6 +703,32 @@ def _lauf(text, schritt, verzeichnis, timeout):
     return -1 if code is None else code
 
 
+#: v19: Kennung -> Name, unter dem das Abbild vor dem Holen/Bauen festgehalten wurde. Ein HIER
+#: gebautes Abbild (buildx mit Attestierung) traegt als Kennung die seiner Manifestliste, und
+#: "docker tag <kennung>" findet es unter dem containerd-Speicher nicht (Auftraege #1603, #1607
+#: graphify, 2026-11-17: "No such image"). Ueber den Namen geht es immer.
+_VORAB = {}
+
+
+def _quelle(kennung):
+    """Was docker tag als Quelle bekommt: der Vorab-Name, sonst die Kennung."""
+    return _VORAB.get(kennung, kennung)
+
+
+def _vorab_benennen(job_id, key, vorher, text):
+    """v19: jedes alte Abbild unter einem eigenen Namen festhalten, BEVOR geholt oder gebaut
+    wird -- solange der Name des Dienstes noch darauf zeigt. Gibt die Namen zurueck."""
+    namen = []
+    for i, (ref, kennung) in enumerate(sorted(vorher.items())):
+        if not kennung:
+            continue
+        name = "%s:%s-a%d-v%d" % (RUECKWEG_NAME, key, int(job_id), i + 1)
+        if _lauf(text, ["docker", "tag", ref, name], "/", 60) == 0:
+            _VORAB[kennung] = name
+            namen.append(name)
+    return namen
+
+
 def _namen_zurueck(vorher, text):
     """Jeden Namen wieder auf das Abbild, auf das er vor dem Holen zeigte. Einen
     Namen, den es vorher nicht gab, nimmt er wieder weg -- sonst startete ein
@@ -710,7 +736,7 @@ def _namen_zurueck(vorher, text):
     for ref, alt in sorted(vorher.items()):
         if (_abbild(ref) or {}).get("Id") == alt:
             continue
-        _lauf(text, ["docker", "tag", alt, ref] if alt else ["docker", "image", "rm", ref], "/", 60)
+        _lauf(text, ["docker", "tag", _quelle(alt), ref] if alt else ["docker", "image", "rm", ref], "/", 60)
 
 
 # -- Lizenz ----------------------------------------------------------------------
@@ -1031,7 +1057,7 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
             alte.remove(kennung)
         for i, kennung in enumerate(alte):
             name = "%s:%s-a%d-%d" % (RUECKWEG_NAME, key, int(job_id), i + 1)
-            if _lauf(text, ["docker", "tag", kennung, name], "/", 60) != 0:
+            if _lauf(text, ["docker", "tag", _quelle(kennung), name], "/", 60) != 0:
                 raise _Abbruch("The old image %s could not be kept under a name." % kennung)
             namen[kennung] = name
         _manifest_schreiben(ordner, {
@@ -1095,7 +1121,19 @@ def _alte_rueckwege_raeumen(key, text):
 def fuehre_update_aus(job_id, key, service_dir, compose_file):
     """(text, code, ergebnis) -- holen, vergleichen, Lizenz, Rueckweg, starten.
     Die Reihenfolge und ihr Warum stehen im Kopf dieser Datei (UPDATE MIT
-    LIZENZPRUEFUNG UND RUECKWEG)."""
+    LIZENZPRUEFUNG UND RUECKWEG). v19: die Vorab-Namen gehen am Ende wieder weg --
+    der Rueckweg haelt die alten Abbilder unter seinen eigenen Namen."""
+    _VORAB.clear()
+    vorab = []
+    try:
+        return _update_lauf(job_id, key, service_dir, compose_file, vorab)
+    finally:
+        for name in vorab:
+            subprocess.run(["docker", "image", "rm", name], capture_output=True, text=True, timeout=60)
+        _VORAB.clear()
+
+
+def _update_lauf(job_id, key, service_dir, compose_file, vorab):
     text = []
     verzeichnis = _verzeichnis(service_dir)
     daten, grund = compose_config(compose_file, verzeichnis)
@@ -1108,6 +1146,7 @@ def fuehre_update_aus(job_id, key, service_dir, compose_file):
         return grund, 1, None
     refs = sorted({e["ref"] for e in dienste.values()})
     vorher = {ref: (_abbild(ref) or {}).get("Id") for ref in refs}
+    vorab.extend(_vorab_benennen(job_id, key, vorher, text))
     ergebnis = {"art": "update", "projekt": projekt, "dienste": {}, "lizenzen": []}
     if any(e["baut"] for e in dienste.values()):
         text.append("The compose file has a build section: the image is built on this\n"
@@ -1244,7 +1283,9 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text):
                     "after the update is kept in full in %s." % (exc, jetzt))
         return "\n".join(text), 1, ergebnis
     for ref, kennung in sorted((manifest.get("namen_vorher") or {}).items()):
-        if kennung and _lauf(text, ["docker", "tag", kennung, ref], "/", 60) != 0:
+        # v19: ueber den Namen des Rueckwegs, nicht ueber die Kennung (siehe _VORAB)
+        quelle = (manifest.get("namen") or {}).get(kennung) or kennung
+        if kennung and _lauf(text, ["docker", "tag", quelle, ref], "/", 60) != 0:
             # v15: die Daten sind schon zurueck -- mit dem neuen Abbild zu
             # starten hiesse neuer Code auf alten Daten. Darum bleiben die Dienste
             # angehalten, und der Satz sagt es.

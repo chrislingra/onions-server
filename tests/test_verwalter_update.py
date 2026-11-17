@@ -88,6 +88,7 @@ class Antwort:
 
 
 GEISTER = set()   # v19: Kennungen, die docker nicht mehr kennt
+UNBENENNBAR = set()   # v19: Kennungen, die docker tag nicht findet (hier gebaut, Manifestliste)
 
 
 def kennung(name):
@@ -138,7 +139,7 @@ def docker(argv):
         ZUSTAND["namen"].pop(a[2], None)
         return 0, "Untagged"
     if a[:1] == ["tag"]:
-        if not kennung(a[1]):
+        if not kennung(a[1]) or a[1] in UNBENENNBAR:
             return 1, "Error response from daemon: No such image: %s" % a[1]
         ziel = ZUSTAND["namen"] if a[2].startswith(v.RUECKWEG_NAME + ":") else ZUSTAND["abbilder"]
         ziel[a[2]] = kennung(a[1])
@@ -318,4 +319,18 @@ GEISTER.add("sha256:CFG-GONE")
 text, code, erg = v.fuehre_update_aus(20, "demo", DIENST, "docker-compose.yml")
 assert code == 0 and "no longer knows under that id" in text and "ruecksicherung" in erg, text
 assert ZUSTAND["container"]["app"]["abbild"] == "sha256:A6", ZUSTAND["container"]
-print("Verwalter v19: 9 cases passed")
+# 10. (v19) das alte Abbild laesst sich nicht ueber seine Kennung benennen -> der Vorab-Name traegt
+UNBENENNBAR.add("sha256:A6")
+ZUSTAND["etiketten"]["sha256:A7"] = "rev4"
+ZUSTAND["registry"]["demo/app:latest"] = "sha256:A7"
+text, code, erg = v.fuehre_update_aus(21, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and "ruecksicherung" in erg, text
+with open(os.path.join(erg["ruecksicherung"], "manifest.json"), encoding="utf-8") as f:
+    m = json.load(f)
+assert m["namen"].get("sha256:A6", "").startswith(v.RUECKWEG_NAME + ":demo-a21-"), m["namen"]
+assert not [n for n in ZUSTAND["namen"] if "-a21-v" in n], "Vorab-Namen bleiben liegen: %s" % ZUSTAND["namen"]
+assert not v._VORAB
+# und der Rueckweg setzt den Namen ueber den Rueckweg-Namen zurueck
+text, code, erg = v.fuehre_rueckweg_aus(22, "demo", DIENST, "docker-compose.yml", '{"update_job": 21}')
+assert code == 0 and ZUSTAND["abbilder"]["demo/app:latest"] == "sha256:A6", text
+print("Verwalter v19: 10 cases passed")
