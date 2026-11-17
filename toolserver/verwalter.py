@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v20)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v21)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -838,7 +838,35 @@ def _registerzeile(ref):
         "SELECT component_key, COALESCE(name, ''), COALESCE(origin_url, '') "
         "FROM governance.third_party_component WHERE active AND component_key IN (%s) "
         "ORDER BY component_key LIMIT 1" % ", ".join("'%s'" % pg_escape(k) for k in sorted(kandidaten)))
+    if rows:
+        return rows[0]
+    # v21: dasselbe Abbild unter einem anderen Versionsnamen (nextcloud:32 statt nextcloud:stable)
+    rows = psql_read(
+        "SELECT component_key, COALESCE(name, ''), COALESCE(origin_url, '') "
+        "FROM governance.third_party_component WHERE active AND component_key LIKE '%s:%%' "
+        "ORDER BY component_key LIMIT 1" % pg_escape(_ablage(ref)))
     return rows[0] if rows else None
+
+
+def _ablage(ref):
+    """v21: der Abbildname ohne Versionsnamen -- nextcloud:32 -> nextcloud,
+    registry:5000/a/b:1 -> registry:5000/a/b."""
+    kopf, _, letzt = ref.rpartition("/")
+    name = letzt.split(":", 1)[0]
+    return (kopf + "/" + name) if kopf else name
+
+
+def _angenommen_gleich(ref, fingerabdruck):
+    """v21: eine Annahme desselben Lizenztextes fuer dasselbe Abbild unter einem anderen
+    Versionsnamen -- oder None. Anlass 2026-11-17: Nextcloud geht von nextcloud:stable auf
+    feste Hauptversionen (31 -> 32 -> 33 -> 34, ein Sprung je Update); der Lizenztext bleibt
+    derselbe, und eine erneute Annahme je Versionsname waere ein Klick ohne Inhalt."""
+    rows = psql_read(
+        "SELECT row_to_json(a)::text FROM (SELECT image_ref, fingerprint, license_spdx, license_name, "
+        "license_source, accepted_at, accepted_by "
+        "FROM public.platform_license_acceptance WHERE image_ref LIKE '%s:%%' AND fingerprint = '%s' "
+        "ORDER BY accepted_at DESC, id DESC LIMIT 1) a" % (pg_escape(_ablage(ref)), pg_escape(fingerabdruck)))
+    return json.loads(rows[0][0]) if rows else None
 
 
 def _angenommen(ref):
@@ -867,6 +895,11 @@ def _lizenzen_pruefen(dienste, geaendert, ergebnis, text):
         if grund:
             return angehalten, "The licence of %s could not be read: %s" % (ref, grund)
         vorige = _angenommen(ref)
+        gleich = None if vorige else _angenommen_gleich(ref, lizenz["fingerabdruck"])
+        if gleich:
+            vorige = gleich
+            lizenz["angenommen_als"] = gleich.get("image_ref") or ""
+            text.append("Licence %s: the same text was accepted for %s." % (ref, lizenz["angenommen_als"]))
         if vorige and vorige.get("fingerprint") == lizenz["fingerabdruck"]:
             stand = "unveraendert"
             lizenz.pop("text", None)
@@ -1932,7 +1965,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v20 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v21 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -1962,7 +1995,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v20 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v21 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:

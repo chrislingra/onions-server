@@ -205,6 +205,15 @@ v.subprocess.Popen = Popen
 
 
 def psql_read(sql):
+    if "image_ref LIKE" in sql:   # v21: dieselbe Ablage unter anderem Versionsnamen
+        ablage = sql.split("image_ref LIKE '")[1].split(":%")[0]
+        fp = sql.split("fingerprint = '")[1].split("'")[0]
+        for ref, a in ZUSTAND["angenommen"].items():
+            if ref.rpartition(":")[0] == ablage and a["fingerprint"] == fp:
+                return [[json.dumps(dict(a, image_ref=ref))]]
+        return []
+    if "third_party_component" in sql and "LIKE" in sql:
+        return [["demo/app:latest", "Demo App", "https://github.com/demo/app"]] if "'demo/app:%" in sql else []
     if "third_party_component" in sql:
         return [["demo/app:latest", "Demo App", "https://github.com/demo/app"]] if "demo/app" in sql else []
     if "platform_license_acceptance" in sql:
@@ -346,4 +355,16 @@ assert "Rolling back automatically" in text and "NOT applied" in text, text
 assert ZUSTAND["abbilder"]["demo/app:latest"] == "sha256:A6", ZUSTAND["abbilder"]
 assert ZUSTAND["container"]["app"] == {"abbild": "sha256:A6", "zustand": "running"}, ZUSTAND["container"]
 assert lies(os.path.join(DATEN, "a.txt")) == "vor-23"
-print("Verwalter v20: 11 cases passed")
+# 12. (v21) dasselbe Abbild unter festem Versionsnamen: die Annahme fuer :latest traegt
+assert v._ablage("nextcloud:32") == "nextcloud" and v._ablage("quay.io/a/b:1") == "quay.io/a/b"
+assert v._ablage("registry:5000/a/b") == "registry:5000/a/b"
+KAPUTT.clear()
+CONFIG["services"]["app"]["image"] = "demo/app:4"
+ZUSTAND["abbilder"]["demo/app:4"] = ZUSTAND["abbilder"]["demo/app:latest"]
+ZUSTAND["registry"]["demo/app:4"] = "sha256:A9"
+ZUSTAND["etiketten"]["sha256:A9"] = "rev4"
+text, code, erg = v.fuehre_update_aus(24, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and erg["lizenzen"][0]["stand"] == "unveraendert", text
+assert erg["lizenzen"][0]["angenommen_als"] == "demo/app:latest", erg["lizenzen"]
+assert "the same text was accepted for demo/app:latest" in text, text
+print("Verwalter v21: 12 cases passed")
