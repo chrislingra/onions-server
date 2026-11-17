@@ -17,6 +17,8 @@ Die Faelle:
        -> kein zweites systemd-run, der Auftrag wird abgeschlossen
     6. das Ende eines Auftrags geht mehrmals hinaus, wenn die Datenbank kurz weg ist
     7. os_update nur am Bestandteil der Art toolserver
+    8. (v18) dpkg scheitert auch nach der Reparatur -> pakete_fehler nennt das Paket, kein shutdown;
+       die Einheit laeuft mit LC_ALL=C, und das Skript traegt den Reparaturgang
 """
 import importlib.util
 import os
@@ -171,4 +173,21 @@ GESCHRIEBEN.clear()
 v.psql_write = lambda sql: GESCHRIEBEN.append(sql)
 v.bearbeite(["7", "docserver", "os_update", "/opt/docserver", "x.yml", "container", "", "", "", "{}"])
 assert "status = 'failed'" in GESCHRIEBEN[-1] and "Toolserver component" in GESCHRIEBEN[-1], GESCHRIEBEN
-print("Verwalter v17 os_update: 7 cases passed")
+# 8. (v18) scheitert trotz Reparatur: das Paket steht im Ergebnis
+AUSGABE[8] = "\n".join([
+    "== apt-get upgrade", "Setting up apparmor (4.0.1) ...",
+    "Errors were encountered while processing:", " crowdsec-firewall-bouncer-nftables",
+    "E: Sub-process /usr/bin/dpkg returned an error code (1)", "== repair: dpkg --configure -a",
+    "Errors were encountered while processing:", " crowdsec-firewall-bouncer-nftables",
+    "== failed services", "-- crowdsec-firewall-bouncer.service", "ONIONS_OS_UPDATE_EXIT=100", ""])
+neustart_verlangt(True)
+vorher = len(shutdowns())
+text, code, erg = v.fuehre_systemupdate_aus(8, '{"reboot": true}')
+assert code == 100 and erg["pakete_fehler"] == ["crowdsec-firewall-bouncer-nftables"], erg
+assert len(shutdowns()) == vorher and erg["neustart"] == "ausstehend", erg
+assert "even after the repair" in text, text
+lauf = [a for a in AUFRUFE if a[0] == "systemd-run"][-1]
+assert "--setenv=LC_ALL=C" in lauf, lauf
+assert "dpkg --force-confdef --force-confold --configure -a" in v.OS_UPDATE_SKRIPT
+assert "second pass" in v.OS_UPDATE_SKRIPT and "journalctl -u" in v.OS_UPDATE_SKRIPT
+print("Verwalter v18 os_update: 8 cases passed")

@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v17)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v18)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -237,6 +237,16 @@ Schwachstellen; die Dienste hatten ihren Weg (update), der Server keinen.
        restart-Regel zurueck, dieser Dienst ueber systemd (WantedBy=multi-user.target).
     Nur fuer den Bestandteil der Art toolserver -- der Server ist einer, und seine
     Auftraege haengen am Toolserver wie die Arbeiten von host.
+    5. (v18, 2026-11-17) Bricht dpkg ab, weil ein Paket sich nicht einrichten laesst,
+       repariert die Einheit einmal selbst: dpkg --configure -a, apt-get -f install,
+       dann upgrade ein zweites Mal. Gemessen am ersten echten Lauf (Auftrag #1592):
+       crowdsec-firewall-bouncer-nftables wurde eingerichtet, waehrend crowdsec selbst
+       erst entpackt und angehalten war -- der Bouncer startete nicht, dpkg brach ab,
+       76 Pakete standen ohne Neustart da. Beim zweiten Durchgang laeuft crowdsec. Bleibt
+       ein Paket kaputt, stehen seine Namen im Ergebnis (pakete_fehler) und das Protokoll
+       der gescheiterten Dienste (journalctl) im Log. Die Einheit laeuft mit LC_ALL=C:
+       das Protokoll ist englisch, und "Setting up" zaehlt die Pakete (bis v17 blieb die
+       Liste bei deutscher Ausgabe leer).
 
 AUSGABE ENGLISCH (v15, 2026-09-28): jede Ausgabe englisch -- Protokoll, Gruende,
 Hinweise, Journal (Bediener: "jeglicher output ist en"). Schluessel und Werte des
@@ -351,11 +361,19 @@ NEUSTART_NOETIG = "/var/run/reboot-required"
 #: Der feste Ablauf in der eigenen Einheit -- nichts aus der Datenbank fliesst hinein.
 OS_UPDATE_SKRIPT = (
     "( set -e; A='-o DPkg::Lock::Timeout=900'; "
+    "K='-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold'; "
     "echo '== apt-get update'; apt-get -q $A update; "
-    "echo '== apt-get upgrade'; apt-get -q -y $A -o Dpkg::Options::=--force-confdef "
-    "-o Dpkg::Options::=--force-confold --with-new-pkgs upgrade; "
+    "echo '== apt-get upgrade'; "
+    "apt-get -q -y $A $K --with-new-pkgs upgrade || { "
+    "echo '== repair: dpkg --configure -a'; "
+    "dpkg --force-confdef --force-confold --configure -a || echo '(dpkg --configure -a failed)'; "
+    "echo '== repair: apt-get -f install'; apt-get -q -y $A $K -f install; "
+    "echo '== apt-get upgrade (second pass)'; apt-get -q -y $A $K --with-new-pkgs upgrade; }; "
     "echo '== apt-get autoremove'; apt-get -q -y $A autoremove --purge ); "
-    "echo \"" + OS_UPDATE_MARKE + "$?\"")
+    "R=$?; if [ $R -ne 0 ]; then echo '== failed services'; "
+    "for U in $(systemctl --failed --plain --no-legend | awk '{print $1}'); do "
+    "echo \"-- $U\"; journalctl -u \"$U\" -n 25 --no-pager; done; fi; "
+    "echo \"" + OS_UPDATE_MARKE + "$R\"")
 #: Ziehen ist ein Netzzugriff, Bauen ist Arbeit. Deshalb zwei Grenzen.
 ZIEH_TIMEOUT = 900
 BAU_TIMEOUT = 3600
@@ -1626,6 +1644,7 @@ def _os_update_starten(job_id):
     r = subprocess.run(
         ["systemd-run", "--unit", einheit, "--collect", "--quiet",
          "--setenv=DEBIAN_FRONTEND=noninteractive", "--setenv=NEEDRESTART_SUSPEND=1",
+         "--setenv=LC_ALL=C", "--setenv=LANG=C",
          "--property=StandardOutput=append:" + datei, "--property=StandardError=append:" + datei,
          "/bin/bash", "-c", OS_UPDATE_SKRIPT],
         capture_output=True, text=True, timeout=60)
@@ -1699,8 +1718,24 @@ def _aktualisierte(text):
     return pakete
 
 
+def _gescheiterte(text):
+    """Die Pakete, an denen dpkg zuletzt scheiterte (v18) -- der letzte Block
+    "Errors were encountered while processing:" der Ausgabe, sonst leer."""
+    zeilen = text.splitlines()
+    for i in range(len(zeilen) - 1, -1, -1):
+        if zeilen[i].strip().startswith("Errors were encountered while processing"):
+            namen = []
+            for z in zeilen[i + 1:]:
+                if not z.startswith(" "):
+                    break
+                namen.append(z.strip())
+            return namen
+    return []
+
+
 def fuehre_systemupdate_aus(job_id, params_text):
-    """os_update (v17): apt in eigener Einheit, die Abschrift, auf Wunsch der Neustart."""
+    """os_update (v17): apt in eigener Einheit, die Abschrift, auf Wunsch der Neustart.
+    v18: die Pakete, an denen dpkg trotz Reparatur scheiterte, stehen in pakete_fehler."""
     try:
         werte = json.loads(params_text or "{}") or {}
     except ValueError:
@@ -1724,8 +1759,11 @@ def fuehre_systemupdate_aus(job_id, params_text):
     elif noetig:
         neustart = "ausstehend"
         zeilen.append("The server asks for a restart (%s); it was not restarted." % (", ".join(pakete_neustart) or "no package named"))
+    fehler = _gescheiterte(text) if code != 0 else []
+    if fehler:
+        zeilen.append("Packages that could not be set up even after the repair: %s." % ", ".join(fehler))
     ergebnis = {"art": "os_update", "pakete": _aktualisierte(text), "neustart": neustart,
-                "neustart_pakete": pakete_neustart, "kernel_laeuft": kernel}
+                "neustart_pakete": pakete_neustart, "kernel_laeuft": kernel, "pakete_fehler": fehler}
     return "\n".join(zeilen), code, ergebnis
 
 
@@ -1822,7 +1860,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v17 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v18 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -1852,7 +1890,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v17 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v18 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:
