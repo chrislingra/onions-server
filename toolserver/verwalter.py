@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v19)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v20)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -1195,15 +1195,36 @@ def _update_lauf(job_id, key, service_dir, compose_file, vorab):
     # des Servers wieder anzulaufen (restart: always).
     if _lauf(text, ["docker", "compose", "-f", compose_file, "up", "-d", "--remove-orphans"],
              verzeichnis, 900) != 0:
-        text.append("The new state did not start. Roll back restores the old one from %s." % ordner)
-        return "\n".join(text), 1, ergebnis
+        text.append("The new state did not start.")
+        return _selbst_zurueck(job_id, key, service_dir, compose_file, ordner, text, ergebnis)
     gut, ergebnis["gesundheit"] = _gesundheit_warten(projekt, geaendert, text)
     if not gut:
-        text.append("The new state does not run cleanly. Roll back restores the old one from %s." % ordner)
-        return "\n".join(text), 1, ergebnis
+        text.append("The new state does not run cleanly.")
+        return _selbst_zurueck(job_id, key, service_dir, compose_file, ordner, text, ergebnis)
     _alte_rueckwege_raeumen(key, text)
     text.append("Update done. The old state is kept in %s; Roll back restores it." % ordner)
     return "\n".join(text), 0, ergebnis
+
+
+def _selbst_zurueck(job_id, key, service_dir, compose_file, ordner, text, ergebnis):
+    """v20: ein Update, dessen neuer Stand nicht sauber laeuft, geht von selbst auf den
+    alten Stand zurueck -- ohne dass jemand Roll back druecken muss. Anlass 2026-11-17,
+    Auftraege #1618 (nextcloud:stable sprang von 31 auf 34, Nextcloud startete nicht mehr)
+    und #1619 (docling fand seine Modelle nicht): beide Dienste standen still, bis der
+    Rueckweg von Hand kam. Der Auftrag bleibt failed -- das Update ist nicht angekommen."""
+    text.append("Rolling back automatically to the state before the update (%s)." % ordner)
+    r_text, r_code, r_erg = fuehre_rueckweg_aus(job_id, key, service_dir, compose_file,
+                                                json.dumps({"update_job": int(job_id)}))
+    text.append(r_text)
+    ergebnis["selbst_zurueck"] = "ok" if r_code == 0 else "failed"
+    ergebnis["rueckweg"] = r_erg
+    if r_code == 0:
+        text.append("The update was NOT applied: the services run on the old state again. "
+                    "The reason is in the lines above.")
+    else:
+        text.append("The automatic roll back did not finish cleanly. Roll back restores the old "
+                    "state from %s." % ordner)
+    return "\n".join(text), 1, ergebnis
 
 
 def _rueckweg_lesen(key, compose_file, verzeichnis, update_job):
@@ -1911,7 +1932,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v19 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v20 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -1941,7 +1962,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v19 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v20 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:

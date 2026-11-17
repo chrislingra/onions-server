@@ -88,6 +88,7 @@ class Antwort:
 
 
 GEISTER = set()   # v19: Kennungen, die docker nicht mehr kennt
+KAPUTT = set()   # v20: Abbilder, deren Container nach dem Start sofort endet
 UNBENENNBAR = set()   # v19: Kennungen, die docker tag nicht findet (hier gebaut, Manifestliste)
 
 
@@ -116,7 +117,8 @@ def docker(argv):
             return 0, was
         if was == "up":
             for d, e in CONFIG["services"].items():
-                ZUSTAND["container"][d] = {"abbild": ZUSTAND["abbilder"][e["image"]], "zustand": "running"}
+                k = ZUSTAND["abbilder"][e["image"]]
+                ZUSTAND["container"][d] = {"abbild": k, "zustand": "exited" if k in KAPUTT else "running"}
             return 0, "up"
     if a[:1] == ["ps"]:
         return 0, "\n".join("c-" + d for d in ZUSTAND["container"])
@@ -333,4 +335,15 @@ assert not v._VORAB
 # und der Rueckweg setzt den Namen ueber den Rueckweg-Namen zurueck
 text, code, erg = v.fuehre_rueckweg_aus(22, "demo", DIENST, "docker-compose.yml", '{"update_job": 21}')
 assert code == 0 and ZUSTAND["abbilder"]["demo/app:latest"] == "sha256:A6", text
-print("Verwalter v19: 10 cases passed")
+# 11. (v20) der neue Stand laeuft nicht -> das Update geht von selbst zurueck
+schreibe(os.path.join(DATEN, "a.txt"), "vor-23")
+ZUSTAND["etiketten"]["sha256:A8"] = "rev4"
+ZUSTAND["registry"]["demo/app:latest"] = "sha256:A8"
+KAPUTT.add("sha256:A8")
+text, code, erg = v.fuehre_update_aus(23, "demo", DIENST, "docker-compose.yml")
+assert code == 1 and erg.get("selbst_zurueck") == "ok", text
+assert "Rolling back automatically" in text and "NOT applied" in text, text
+assert ZUSTAND["abbilder"]["demo/app:latest"] == "sha256:A6", ZUSTAND["abbilder"]
+assert ZUSTAND["container"]["app"] == {"abbild": "sha256:A6", "zustand": "running"}, ZUSTAND["container"]
+assert lies(os.path.join(DATEN, "a.txt")) == "vor-23"
+print("Verwalter v20: 11 cases passed")
