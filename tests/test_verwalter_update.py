@@ -73,6 +73,7 @@ ZUSTAND = {
                   "cache": {"abbild": "sha256:K1", "zustand": "running"}},
     "namen": {},
     "angenommen": {},
+    "rueckwege_ok": [],   # v22: result.jetzt der Rueckwege mit Status ok
 }
 CONFIG = {"name": "demo", "volumes": {"db": {"name": "demo_db"}}, "services": {
     "app": {"image": "demo/app:latest", "volumes": [
@@ -205,6 +206,9 @@ v.subprocess.Popen = Popen
 
 
 def psql_read(sql):
+    if "action = 'rollback'" in sql:   # v22
+        assert "component_key = 'demo'" in sql, sql
+        return [[p] for p in ZUSTAND["rueckwege_ok"]]
     if "image_ref LIKE" in sql:   # v21: dieselbe Ablage unter anderem Versionsnamen
         ablage = sql.split("image_ref LIKE '")[1].split(":%")[0]
         fp = sql.split("fingerprint = '")[1].split("'")[0]
@@ -355,6 +359,7 @@ assert "Rolling back automatically" in text and "NOT applied" in text, text
 assert ZUSTAND["abbilder"]["demo/app:latest"] == "sha256:A6", ZUSTAND["abbilder"]
 assert ZUSTAND["container"]["app"] == {"abbild": "sha256:A6", "zustand": "running"}, ZUSTAND["container"]
 assert lies(os.path.join(DATEN, "a.txt")) == "vor-23"
+assert not os.path.exists(erg["rueckweg"]["jetzt"]) and "failed state is not kept" in text, text
 # 12. (v21) dasselbe Abbild unter festem Versionsnamen: die Annahme fuer :latest traegt
 assert v._ablage("nextcloud:32") == "nextcloud" and v._ablage("quay.io/a/b:1") == "quay.io/a/b"
 assert v._ablage("registry:5000/a/b") == "registry:5000/a/b"
@@ -367,4 +372,18 @@ text, code, erg = v.fuehre_update_aus(24, "demo", DIENST, "docker-compose.yml")
 assert code == 0 and erg["lizenzen"][0]["stand"] == "unveraendert", text
 assert erg["lizenzen"][0]["angenommen_als"] == "demo/app:latest", erg["lizenzen"]
 assert "the same text was accepted for demo/app:latest" in text, text
-print("Verwalter v21: 12 cases passed")
+# 13. (v22) der ersetzte Stand eines sauber beendeten Rueckwegs von Hand geht mit dem
+# naechsten Update weg; ein fremder Ort in der Liste bleibt unberuehrt
+text, code, erg = v.fuehre_rueckweg_aus(25, "demo", DIENST, "docker-compose.yml", '{"update_job": 24}')
+assert code == 0 and os.path.isdir(erg["jetzt"]), text
+ersetzt = erg["jetzt"]
+fremd = os.path.join(WURZEL, "fremd")
+os.makedirs(fremd)
+ZUSTAND["rueckwege_ok"] = [ersetzt, fremd, os.path.join(v.RUECKWEG_WURZEL, "demo", v.RUECKWEG_BLATT), ""]
+ZUSTAND["registry"]["demo/app:4"] = "sha256:A10"
+ZUSTAND["etiketten"]["sha256:A10"] = "rev4"
+text, code, erg = v.fuehre_update_aus(26, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and not os.path.exists(ersetzt), text
+assert "Replaced state of a finished roll back removed" in text, text
+assert os.path.isdir(fremd) and os.path.isdir(os.path.join(v.RUECKWEG_WURZEL, "demo", v.RUECKWEG_BLATT))
+print("Verwalter v22: 13 cases passed")

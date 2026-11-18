@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v21)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v22)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -184,7 +184,13 @@ Datenbank um. Seit v14 in dieser Reihenfolge:
     6. aeltere Rueckwege dieses Dienstes raeumen (RUECKWEG_BEHALTEN bleiben).
 rollback spielt einen solchen Rueckweg zurueck -- und haelt vorher den Stand, den
 er ersetzt, im selben Ordner fest (vor-rueckweg-<stempel>/): auch der Rueckweg
-laesst sich zuruecknehmen.
+laesst sich zuruecknehmen. v22: dieser ersetzte Stand ist so gross wie die Daten
+selbst (Nextcloud 2026-11-17: 72 GB) und blockierte das naechste Update mit "Not
+enough space". Er geht darum weg, sobald er nicht mehr gebraucht wird -- nach
+einem selbsttaetigen Rueckweg (v20), der sauber endet, sofort: der ersetzte
+Stand ist dann der gescheiterte; nach einem Rueckweg von Hand, der sauber
+endete, mit dem naechsten Update dieses Dienstes: wer neu aktualisiert, ist
+beim zurueckgeholten Stand geblieben.
 
 EIN STAND DES HERSTELLERS (v16, 2026-11-03, GAP-ENV-UPDATES-GITHUB-QUELLE-01 Stufe 2).
 Bediener 2026-11-01: der Updatestatus kommt ueber die Lizenzpruefung -- seit
@@ -1062,6 +1068,7 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
         return None, grund
     wurzel = os.path.join(RUECKWEG_WURZEL, key, RUECKWEG_BLATT)
     os.makedirs(wurzel, mode=0o750, exist_ok=True)
+    _ersetzte_staende_raeumen(key, text)
     grund = _platz_pruefen(liste, wurzel)
     if grund:
         return None, grund
@@ -1108,6 +1115,36 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
         return None, "The way back could not be created (%s) -- the services run on the old state." % exc
     text.append("Way back created: %s" % ordner)
     return ordner, ""
+
+
+def _ersetzt_ordner(pfad, wurzel):
+    """v22: nur ein vor-rueckweg-Ordner unter einem Rueckweg dieses Dienstes, nichts sonst."""
+    rel = os.path.relpath(os.path.normpath(pfad), wurzel) if pfad else ".."
+    teile = rel.replace(os.sep, "/").split("/")
+    return (len(teile) == 2 and RUECKWEG_ORDNER.match(teile[0]) is not None
+            and teile[1].startswith("vor-rueckweg-") and os.path.isdir(pfad)
+            and not os.path.islink(pfad))
+
+
+def _ersetzte_staende_raeumen(key, text):
+    """v22: vor einem Update die Staende weg, die ein sauber beendeter Rueckweg dieses
+    Dienstes ersetzt hat (result.jetzt eines Auftrags rollback mit Status ok). Ein
+    Rueckweg, der scheiterte, behaelt seinen ersetzten Stand -- er kann der einzige sein."""
+    wurzel = os.path.join(RUECKWEG_WURZEL, key, RUECKWEG_BLATT)
+    if not os.path.isdir(wurzel):
+        return
+    try:
+        zeilen = psql_read(
+            "SELECT result->>'jetzt' FROM public.platform_agent_jobs WHERE action = 'rollback' "
+            "AND status = 'ok' AND component_key = '%s' AND result->>'jetzt' IS NOT NULL" % pg_escape(key))
+    except (RuntimeError, subprocess.SubprocessError, OSError) as exc:
+        text.append("NOTE: replaced states not read (%s); none removed." % exc)
+        return
+    for zeile in zeilen:
+        pfad = zeile[0] if zeile else ""
+        if _ersetzt_ordner(pfad, wurzel):
+            shutil.rmtree(pfad)
+            text.append("Replaced state of a finished roll back removed: %s" % pfad)
 
 
 def _gesundheit_warten(projekt, dienste_liste, text):
@@ -1252,6 +1289,11 @@ def _selbst_zurueck(job_id, key, service_dir, compose_file, ordner, text, ergebn
     ergebnis["selbst_zurueck"] = "ok" if r_code == 0 else "failed"
     ergebnis["rueckweg"] = r_erg
     if r_code == 0:
+        # v22: der ersetzte Stand ist der gescheiterte -- er wird nicht gebraucht
+        jetzt = (r_erg or {}).get("jetzt") or ""
+        if _ersetzt_ordner(jetzt, os.path.join(RUECKWEG_WURZEL, key, RUECKWEG_BLATT)):
+            shutil.rmtree(jetzt)
+            text.append("The failed state is not kept: %s removed." % jetzt)
         text.append("The update was NOT applied: the services run on the old state again. "
                     "The reason is in the lines above.")
     else:
@@ -1965,7 +2007,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v21 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v22 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -1995,7 +2037,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v21 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v22 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:

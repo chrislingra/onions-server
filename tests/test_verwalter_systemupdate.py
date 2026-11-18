@@ -190,4 +190,4 @@ lauf = [a for a in AUFRUFE if a[0] == "systemd-run"][-1]
 assert "--setenv=LC_ALL=C" in lauf, lauf
 assert "dpkg --force-confdef --force-confold --configure -a" in v.OS_UPDATE_SKRIPT
 assert "second pass" in v.OS_UPDATE_SKRIPT and "journalctl -u" in v.OS_UPDATE_SKRIPT
-print("Verwalter v21 os_update: 8 cases passed")
+print("Verwalter v22 os_update: 8 cases passed")
