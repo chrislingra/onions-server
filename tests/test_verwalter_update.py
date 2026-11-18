@@ -428,4 +428,28 @@ ZUSTAND["etiketten"]["sha256:A12"] = "rev4"
 text, code, erg = v.fuehre_update_aus(28, "demo", DIENST, "docker-compose.yml")
 assert code == 1 and "would not be enough either" in text and rueckwege() == vorher, text
 assert ZUSTAND["container"]["app"]["zustand"] == "running", ZUSTAND["container"]
-print("Verwalter v23: 15 cases passed")
+# 16. (v24, Auftrag #1640) die Datenbank, von der app abhaengt, behaelt ihr Abbild, wird aber
+# vom Update umgebaut -> sie wird mit gesichert, und rollback spielt sie mit zurueck
+DBDATEN = os.path.join(DIENST, "dbdaten")
+os.makedirs(DBDATEN)
+schreibe(os.path.join(DBDATEN, "schema.txt"), "schema-alt")
+CONFIG["services"]["pg"] = {"image": "postgres:16", "volumes": [
+    {"type": "bind", "source": DBDATEN, "target": "/var/lib/postgresql/data"}]}
+CONFIG["services"]["app"]["depends_on"] = {"pg": {"condition": "service_started"}}
+ZUSTAND["abbilder"]["postgres:16"] = ZUSTAND["registry"]["postgres:16"] = "sha256:P1"
+ZUSTAND["container"]["pg"] = {"abbild": "sha256:P1", "zustand": "running"}
+GROESSE[0] = 10 ** 15
+ZUSTAND["registry"]["demo/app:4"] = "sha256:A13"
+ZUSTAND["etiketten"]["sha256:A13"] = "rev4"
+text, code, erg = v.fuehre_update_aus(29, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and "Backed up with them, as they depend on them: pg" in text, text
+with open(os.path.join(erg["ruecksicherung"], "manifest.json"), encoding="utf-8") as f:
+    m = json.load(f)
+assert m["geaendert"] == ["app"] and m["gesichert"] == ["app", "pg"], m
+assert any(s["quelle"] == DBDATEN for s in m["sicherungen"]), m["sicherungen"]
+assert v._mit_abhaengigen({"a": {"braucht": ["b"]}, "b": {"braucht": ["c"]}, "c": {}}, ["a"]) == ["a", "b", "c"]
+schreibe(os.path.join(DBDATEN, "schema.txt"), "schema-neu")
+text, code, erg = v.fuehre_rueckweg_aus(30, "demo", DIENST, "docker-compose.yml", '{"update_job": 29}')
+assert code == 0 and lies(os.path.join(DBDATEN, "schema.txt")) == "schema-alt", text
+assert ZUSTAND["container"]["pg"]["zustand"] == "running", ZUSTAND["container"]
+print("Verwalter v24: 16 cases passed")

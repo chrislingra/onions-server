@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v23)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v24)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -199,6 +199,12 @@ gescheiterten Stand gar nicht erst fest -- er braucht keinen Platz, und der Weg
 zurueck bleibt der Rueckweg des Updates selbst; (b) fehlt einem Update der Platz
 fuer seinen Rueckweg, gehen vorher die aelteren Rueckwege dieses Dienstes weg,
 der aelteste zuerst, bis er reicht -- der juengste bleibt immer.
+v24 (2026-11-18, Auftrag #1640, nextcloud:33): gesichert wurden nur die Daten
+des Dienstes mit neuem Abbild -- Nextcloud baut aber beim Sprung auf eine neue
+Hauptversion die Datenbank in nextcloud-db um, deren Abbild bleibt. Ein
+Rueckweg haette alte Dateien neben eine umgebaute Datenbank gelegt. Seitdem
+werden auch die Dienste angehalten und gesichert, von denen ein geaenderter
+abhaengt (depends_on, auch mittelbar); rollback spielt sie alle zurueck.
 
 EIN STAND DES HERSTELLERS (v16, 2026-11-03, GAP-ENV-UPDATES-GITHUB-QUELLE-01 Stufe 2).
 Bediener 2026-11-01: der Updatestatus kommt ueber die Lizenzpruefung -- seit
@@ -650,9 +656,26 @@ def _dienste(daten):
                 mounts.append({"art": "volume", "quelle": echt, "ro": bool(v.get("read_only"))})
             elif v.get("type") == "bind":
                 mounts.append({"art": "bind", "quelle": v["source"], "ro": bool(v.get("read_only"))})
+        abh = e.get("depends_on") or {}
         ergebnis[name] = {"ref": e.get("image") or "%s-%s" % (projekt, name),
-                          "baut": bool(e.get("build")), "mounts": mounts}
+                          "baut": bool(e.get("build")), "mounts": mounts,
+                          "braucht": sorted(abh) if isinstance(abh, (dict, list)) else []}
     return ergebnis
+
+
+def _mit_abhaengigen(dienste, geaendert):
+    """v24: die geaenderten Dienste und alle, von denen sie abhaengen (depends_on,
+    auch mittelbar). Deren Daten schreibt ein Update mit -- Nextcloud baut beim
+    Sprung auf eine neue Hauptversion die Datenbank in nextcloud-db um, deren
+    Abbild bleibt (Auftrag #1640, 2026-11-18: gesichert wurden nur die Dateien)."""
+    alle, offen = set(), list(geaendert)
+    while offen:
+        d = offen.pop()
+        if d in alle or d not in dienste:
+            continue
+        alle.add(d)
+        offen.extend(dienste[d].get("braucht") or [])
+    return sorted(alle)
 
 
 def _docker_json(argumente, timeout=120):
@@ -1105,7 +1128,11 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
     """(ordner, grund) -- die Daten der geaenderten Dienste, bei angehaltenen
     Diensten gelesen, und die alten Abbilder unter festen Namen. Scheitert etwas,
     laufen die Dienste wieder auf dem alten Stand, und der halbe Ordner geht weg."""
-    liste, grund = _zu_sichern(dienste, geaendert, text)
+    gesichert = _mit_abhaengigen(dienste, geaendert)
+    if gesichert != geaendert:
+        text.append("Backed up with them, as they depend on them: %s"
+                    % ", ".join(d for d in gesichert if d not in geaendert))
+    liste, grund = _zu_sichern(dienste, gesichert, text)
     if grund:
         return None, grund
     wurzel = os.path.join(RUECKWEG_WURZEL, key, RUECKWEG_BLATT)
@@ -1116,9 +1143,9 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
         return None, grund
     ordner = os.path.join(wurzel, "%s-auftrag%d" % (datetime.now().strftime("%Y%m%d-%H%M%S"), int(job_id)))
     os.makedirs(ordner, mode=0o750)
-    if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + geaendert, verzeichnis, 600) != 0:
+    if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + gesichert, verzeichnis, 600) != 0:
         shutil.rmtree(ordner)
-        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
+        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + gesichert, verzeichnis, 600)
         return None, "The services could not be stopped -- nothing backed up, nothing changed."
     namen = {}
     # nur die Namen der geaenderten Dienste -- ein Dienst, dessen Abbild bleibt, braucht keinen Rueckweg
@@ -1144,13 +1171,13 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
             namen[kennung] = name
         _manifest_schreiben(ordner, {
             "auftrag": int(job_id), "key": key, "projekt": projekt, "compose_file": compose_file,
-            "verzeichnis": verzeichnis, "geaendert": geaendert,
+            "verzeichnis": verzeichnis, "geaendert": geaendert, "gesichert": gesichert,
             "dienste": {d: {"ref": dienste[d]["ref"], "alt": (alt.get(d) or {}).get("abbild") or ""}
                         for d in geaendert},
             "namen_vorher": vorher, "namen": namen, "sicherungen": liste})
     except (_Abbruch, OSError) as exc:
         text.append("ABORTED: %s" % exc)
-        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
+        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + gesichert, verzeichnis, 600)
         for name in namen.values():
             _lauf(text, ["docker", "image", "rm", name], "/", 60)
         shutil.rmtree(ordner)
@@ -1388,6 +1415,8 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text, fes
     if grund:
         return grund + " Nothing changed.", 1, None
     geaendert = manifest["geaendert"]
+    # v24: angehalten und zurueckgespielt werden alle gesicherten Dienste (vor v24: die geaenderten)
+    gesichert = manifest.get("gesichert") or geaendert
     liste = manifest.get("sicherungen") or []
     ergebnis = {"art": "rueckweg", "update_job": update_job, "ordner": ordner}
     if festhalten:
@@ -1401,15 +1430,15 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text, fes
     else:
         jetzt = ""
         bleibt = " The way back in %s is unchanged; Roll back can run again." % ordner
-    if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + geaendert, verzeichnis, 600) != 0:
-        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
+    if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + gesichert, verzeichnis, 600) != 0:
+        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + gesichert, verzeichnis, 600)
         return "\n".join(text + ["The services could not be stopped -- nothing changed."]), 1, ergebnis
     if jetzt:
         try:
             for e in liste:
                 _archiv_schreiben(e, jetzt, text)
         except (_Abbruch, OSError) as exc:
-            _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
+            _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + gesichert, verzeichnis, 600)
             return "\n".join(text + ["ABORTED: %s -- nothing changed." % exc]), 1, ergebnis
         text.append("The state after the update is kept in %s." % jetzt)
     else:
@@ -1435,7 +1464,7 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text, fes
         text.append("docker compose up -d failed: data and images of the state before the update "
                     "are in place, but the services did not start.%s" % bleibt)
         return "\n".join(text), 1, ergebnis
-    gut, ergebnis["gesundheit"] = _gesundheit_warten(manifest.get("projekt") or "", geaendert, text)
+    gut, ergebnis["gesundheit"] = _gesundheit_warten(manifest.get("projekt") or "", gesichert, text)
     abweichend = sorted(d for d, e in (manifest.get("dienste") or {}).items()
                         if e.get("alt") and e["alt"] != (manifest.get("namen_vorher") or {}).get(e.get("ref")))
     if abweichend:
@@ -2047,7 +2076,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v23 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v24 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -2077,7 +2106,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v23 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v24 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:
