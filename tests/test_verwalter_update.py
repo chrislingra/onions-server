@@ -359,7 +359,9 @@ assert "Rolling back automatically" in text and "NOT applied" in text, text
 assert ZUSTAND["abbilder"]["demo/app:latest"] == "sha256:A6", ZUSTAND["abbilder"]
 assert ZUSTAND["container"]["app"] == {"abbild": "sha256:A6", "zustand": "running"}, ZUSTAND["container"]
 assert lies(os.path.join(DATEN, "a.txt")) == "vor-23"
-assert not os.path.exists(erg["rueckweg"]["jetzt"]) and "failed state is not kept" in text, text
+# v23: der gescheiterte Stand wird gar nicht erst festgehalten
+assert "jetzt" not in erg["rueckweg"] and "failed state is not kept" in text, text
+assert not [d for d in os.listdir(erg["ruecksicherung"]) if d.startswith("vor-rueckweg-")], erg
 # 12. (v21) dasselbe Abbild unter festem Versionsnamen: die Annahme fuer :latest traegt
 assert v._ablage("nextcloud:32") == "nextcloud" and v._ablage("quay.io/a/b:1") == "quay.io/a/b"
 assert v._ablage("registry:5000/a/b") == "registry:5000/a/b"
@@ -386,4 +388,44 @@ text, code, erg = v.fuehre_update_aus(26, "demo", DIENST, "docker-compose.yml")
 assert code == 0 and not os.path.exists(ersetzt), text
 assert "Replaced state of a finished roll back removed" in text, text
 assert os.path.isdir(fremd) and os.path.isdir(os.path.join(v.RUECKWEG_WURZEL, "demo", v.RUECKWEG_BLATT))
-print("Verwalter v22: 13 cases passed")
+# 14. (v23, Auftrag #1638) der Platz reicht nicht fuer den neuen Rueckweg: der aeltere geht,
+# der juengste bleibt -- und der selbsttaetige Rueckweg braucht keinen Platz
+blatt = os.path.join(v.RUECKWEG_WURZEL, "demo", v.RUECKWEG_BLATT)
+
+
+def belegt():
+    return sum(os.path.getsize(os.path.join(w, f)) for w, _, fs in os.walk(blatt) for f in fs)
+
+
+def rueckwege():
+    return sorted(d for d in os.listdir(blatt) if v.RUECKWEG_ORDNER.match(d))
+
+
+class Platte:
+    def __init__(self, frei):
+        self.free = frei
+
+
+bedarf = sum(os.path.getsize(os.path.join(w, f)) for o in (DATEN, VOLUME) for w, _, fs in os.walk(o) for f in fs)
+vorher = rueckwege()
+assert len(vorher) == 2, vorher
+GROESSE = [belegt() + bedarf + bedarf // 10 - 1]   # frei: eins zu wenig, solange beide liegen
+v.shutil.disk_usage = lambda pfad: Platte(GROESSE[0] - belegt())
+ZUSTAND["registry"]["demo/app:4"] = "sha256:A11"
+ZUSTAND["etiketten"]["sha256:A11"] = "rev4"
+KAPUTT.add("sha256:A11")
+text, code, erg = v.fuehre_update_aus(27, "demo", DIENST, "docker-compose.yml")
+assert code == 1 and erg.get("selbst_zurueck") == "ok", text
+assert "Older way back removed to make room" in text and vorher[0] in text, text
+assert rueckwege() == [vorher[1], os.path.basename(erg["ruecksicherung"])], rueckwege()
+# 15. (v23) auch ohne die aelteren reicht der Platz nicht -> keiner geht, nichts geaendert
+KAPUTT.clear()
+schreibe(os.path.join(DATEN, "gross.bin"), "x" * 2000000)
+vorher = rueckwege()
+GROESSE[0] = belegt()
+ZUSTAND["registry"]["demo/app:4"] = "sha256:A12"
+ZUSTAND["etiketten"]["sha256:A12"] = "rev4"
+text, code, erg = v.fuehre_update_aus(28, "demo", DIENST, "docker-compose.yml")
+assert code == 1 and "would not be enough either" in text and rueckwege() == vorher, text
+assert ZUSTAND["container"]["app"]["zustand"] == "running", ZUSTAND["container"]
+print("Verwalter v23: 15 cases passed")

@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v22)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v23)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -191,6 +191,14 @@ einem selbsttaetigen Rueckweg (v20), der sauber endet, sofort: der ersetzte
 Stand ist dann der gescheiterte; nach einem Rueckweg von Hand, der sauber
 endete, mit dem naechsten Update dieses Dienstes: wer neu aktualisiert, ist
 beim zurueckgeholten Stand geblieben.
+v23 (2026-11-18, Auftrag #1638, nextcloud:32): zwei Rueckwege zu je 74 GB lagen
+da, 66 GB waren frei -- der selbsttaetige Rueckweg scheiterte an "Not enough
+space", weil er erst den gescheiterten Stand sichern wollte, und Nextcloud blieb
+im Wartungszustand stehen. Seitdem: (a) ein selbsttaetiger Rueckweg haelt den
+gescheiterten Stand gar nicht erst fest -- er braucht keinen Platz, und der Weg
+zurueck bleibt der Rueckweg des Updates selbst; (b) fehlt einem Update der Platz
+fuer seinen Rueckweg, gehen vorher die aelteren Rueckwege dieses Dienstes weg,
+der aelteste zuerst, bis er reicht -- der juengste bleibt immer.
 
 EIN STAND DES HERSTELLERS (v16, 2026-11-03, GAP-ENV-UPDATES-GITHUB-QUELLE-01 Stufe 2).
 Bediener 2026-11-01: der Updatestatus kommt ueber die Lizenzpruefung -- seit
@@ -988,14 +996,48 @@ def _groesse(pfad):
         return 0
 
 
-def _platz_pruefen(eintraege, ordner_eltern):
+def _platz_pruefen(eintraege, ordner_eltern, bedarf=None):
     """Grund, wenn nicht genug Platz ist -- die Daten einmal und ein Zehntel dazu."""
-    bedarf = sum(_groesse(e["ort"]) for e in eintraege)
+    if bedarf is None:
+        bedarf = sum(_groesse(e["ort"]) for e in eintraege)
     frei = shutil.disk_usage(ordner_eltern).free
     if bedarf + bedarf // 10 > frei:
         return "Not enough space under %s: %d MB needed, %d MB free. Nothing changed." % (
             ordner_eltern, bedarf // 1048576, frei // 1048576)
     return ""
+
+
+def _platz_schaffen(eintraege, wurzel, text):
+    """v23: reicht der Platz fuer einen neuen Rueckweg nicht, gehen die aelteren
+    Rueckwege dieses Dienstes weg, der aelteste zuerst -- der juengste bleibt immer.
+    Reichte auch das nicht, geht keiner weg: ohne Update kein Grund, einen zu verlieren."""
+    bedarf = sum(_groesse(e["ort"]) for e in eintraege)
+    grund = _platz_pruefen(eintraege, wurzel, bedarf)
+    ordner = sorted(d for d in os.listdir(wurzel) if RUECKWEG_ORDNER.match(d))
+    if not grund:
+        return ""
+    moeglich = shutil.disk_usage(wurzel).free + sum(_groesse(os.path.join(wurzel, d)) for d in ordner[:-1])
+    if bedarf + bedarf // 10 > moeglich:
+        return grund.replace(" Nothing changed.", " Removing the older ways back would not be "
+                             "enough either -- none removed, nothing changed.")
+    while grund and len(ordner) > 1:
+        pfad = os.path.join(wurzel, ordner.pop(0))
+        _rueckweg_entfernen(pfad, text)
+        text.append("Older way back removed to make room for the new one: %s" % pfad)
+        grund = _platz_pruefen(eintraege, wurzel, bedarf)
+    return grund
+
+
+def _rueckweg_entfernen(pfad, text):
+    """Ein Rueckweg samt den Namen, die seine alten Abbilder festhalten."""
+    try:
+        with open(os.path.join(pfad, "manifest.json"), encoding="utf-8") as f:
+            namen = (json.load(f).get("namen") or {}).values()
+    except (OSError, ValueError):
+        namen = []
+    for name in namen:
+        _lauf(text, ["docker", "image", "rm", name], "/", 60)
+    shutil.rmtree(pfad)
 
 
 def _lesbar(archiv):
@@ -1069,7 +1111,7 @@ def _rueckweg_anlegen(job_id, key, compose_file, verzeichnis, projekt, dienste, 
     wurzel = os.path.join(RUECKWEG_WURZEL, key, RUECKWEG_BLATT)
     os.makedirs(wurzel, mode=0o750, exist_ok=True)
     _ersetzte_staende_raeumen(key, text)
-    grund = _platz_pruefen(liste, wurzel)
+    grund = _platz_schaffen(liste, wurzel, text)
     if grund:
         return None, grund
     ordner = os.path.join(wurzel, "%s-auftrag%d" % (datetime.now().strftime("%Y%m%d-%H%M%S"), int(job_id)))
@@ -1177,14 +1219,7 @@ def _alte_rueckwege_raeumen(key, text):
     ordner = sorted(d for d in os.listdir(wurzel) if RUECKWEG_ORDNER.match(d))
     for alt in ordner[:-RUECKWEG_BEHALTEN]:
         pfad = os.path.join(wurzel, alt)
-        try:
-            with open(os.path.join(pfad, "manifest.json"), encoding="utf-8") as f:
-                namen = (json.load(f).get("namen") or {}).values()
-        except (OSError, ValueError):
-            namen = []
-        for name in namen:
-            _lauf(text, ["docker", "image", "rm", name], "/", 60)
-        shutil.rmtree(pfad)
+        _rueckweg_entfernen(pfad, text)
         text.append("Older way back removed: %s" % pfad)
 
 
@@ -1283,17 +1318,14 @@ def _selbst_zurueck(job_id, key, service_dir, compose_file, ordner, text, ergebn
     und #1619 (docling fand seine Modelle nicht): beide Dienste standen still, bis der
     Rueckweg von Hand kam. Der Auftrag bleibt failed -- das Update ist nicht angekommen."""
     text.append("Rolling back automatically to the state before the update (%s)." % ordner)
+    # v23: der ersetzte Stand ist der gescheiterte -- er wird gar nicht erst festgehalten
     r_text, r_code, r_erg = fuehre_rueckweg_aus(job_id, key, service_dir, compose_file,
-                                                json.dumps({"update_job": int(job_id)}))
+                                                json.dumps({"update_job": int(job_id)}),
+                                                festhalten=False)
     text.append(r_text)
     ergebnis["selbst_zurueck"] = "ok" if r_code == 0 else "failed"
     ergebnis["rueckweg"] = r_erg
     if r_code == 0:
-        # v22: der ersetzte Stand ist der gescheiterte -- er wird nicht gebraucht
-        jetzt = (r_erg or {}).get("jetzt") or ""
-        if _ersetzt_ordner(jetzt, os.path.join(RUECKWEG_WURZEL, key, RUECKWEG_BLATT)):
-            shutil.rmtree(jetzt)
-            text.append("The failed state is not kept: %s removed." % jetzt)
         text.append("The update was NOT applied: the services run on the old state again. "
                     "The reason is in the lines above.")
     else:
@@ -1338,9 +1370,11 @@ def _rueckweg_lesen(key, compose_file, verzeichnis, update_job):
     return ordner, manifest, ""
 
 
-def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text):
+def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text, festhalten=True):
     """(text, code, ergebnis) -- den Stand vor einem Update wiederherstellen. Der
-    Stand, den das ersetzt, wird vorher im selben Ordner festgehalten."""
+    Stand, den das ersetzt, wird vorher im selben Ordner festgehalten -- ausser beim
+    selbsttaetigen Rueckweg (festhalten=False, v23): der ersetzte Stand ist dann der
+    gescheiterte, und sein Festhalten kostete so viel Platz wie die Daten selbst."""
     try:
         werte = json.loads(params_text or "{}") or {}
     except ValueError:
@@ -1355,28 +1389,36 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text):
         return grund + " Nothing changed.", 1, None
     geaendert = manifest["geaendert"]
     liste = manifest.get("sicherungen") or []
-    jetzt = os.path.join(ordner, "vor-rueckweg-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
-    grund = _platz_pruefen(liste, ordner)
-    if grund:
-        return grund, 1, None
-    os.makedirs(jetzt, mode=0o750)
-    ergebnis = {"art": "rueckweg", "update_job": update_job, "ordner": ordner, "jetzt": jetzt}
+    ergebnis = {"art": "rueckweg", "update_job": update_job, "ordner": ordner}
+    if festhalten:
+        jetzt = os.path.join(ordner, "vor-rueckweg-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+        grund = _platz_pruefen(liste, ordner)
+        if grund:
+            return grund, 1, None
+        os.makedirs(jetzt, mode=0o750)
+        ergebnis["jetzt"] = jetzt
+        bleibt = " The state after the update is kept in full in %s." % jetzt
+    else:
+        jetzt = ""
+        bleibt = " The way back in %s is unchanged; Roll back can run again." % ordner
     if _lauf(text, ["docker", "compose", "-f", compose_file, "stop"] + geaendert, verzeichnis, 600) != 0:
         _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
         return "\n".join(text + ["The services could not be stopped -- nothing changed."]), 1, ergebnis
-    try:
-        for e in liste:
-            _archiv_schreiben(e, jetzt, text)
-    except (_Abbruch, OSError) as exc:
-        _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
-        return "\n".join(text + ["ABORTED: %s -- nothing changed." % exc]), 1, ergebnis
-    text.append("The state after the update is kept in %s." % jetzt)
+    if jetzt:
+        try:
+            for e in liste:
+                _archiv_schreiben(e, jetzt, text)
+        except (_Abbruch, OSError) as exc:
+            _lauf(text, ["docker", "compose", "-f", compose_file, "start"] + geaendert, verzeichnis, 600)
+            return "\n".join(text + ["ABORTED: %s -- nothing changed." % exc]), 1, ergebnis
+        text.append("The state after the update is kept in %s." % jetzt)
+    else:
+        text.append("The failed state is not kept (automatic roll back) -- no space needed for it.")
     try:
         for e in liste:
             _archiv_zurueck(e, ordner, text)
     except (_Abbruch, OSError) as exc:
-        text.append("ABORTED while restoring: %s. The services stay stopped; the state "
-                    "after the update is kept in full in %s." % (exc, jetzt))
+        text.append("ABORTED while restoring: %s. The services stay stopped.%s" % (exc, bleibt))
         return "\n".join(text), 1, ergebnis
     for ref, kennung in sorted((manifest.get("namen_vorher") or {}).items()):
         # v19: ueber den Namen des Rueckwegs, nicht ueber die Kennung (siehe _VORAB)
@@ -1387,13 +1429,11 @@ def fuehre_rueckweg_aus(job_id, key, service_dir, compose_file, params_text):
             # angehalten, und der Satz sagt es.
             text.append("The name %s could not be set back to the old state. The data before "
                         "the update is restored, so the services stay stopped rather than start "
-                        "the new image on it. The state after the update is kept in full in %s."
-                        % (ref, jetzt))
+                        "the new image on it.%s" % (ref, bleibt))
             return "\n".join(text), 1, ergebnis
     if _lauf(text, ["docker", "compose", "-f", compose_file, "up", "-d"], verzeichnis, 900) != 0:
         text.append("docker compose up -d failed: data and images of the state before the update "
-                    "are in place, but the services did not start. The state after the update is "
-                    "kept in full in %s." % jetzt)
+                    "are in place, but the services did not start.%s" % bleibt)
         return "\n".join(text), 1, ergebnis
     gut, ergebnis["gesundheit"] = _gesundheit_warten(manifest.get("projekt") or "", geaendert, text)
     abweichend = sorted(d for d, e in (manifest.get("dienste") or {}).items()
@@ -2007,7 +2047,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v22 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v23 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -2037,7 +2077,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v22 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v23 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:
