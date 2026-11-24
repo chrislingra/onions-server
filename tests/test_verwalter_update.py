@@ -88,6 +88,8 @@ class Antwort:
         self.returncode, self.stdout, self.stderr = code, out, "" if code == 0 else "Error: " + out
 
 
+GEBAUT = {}   # v25: Name -> Abbild, das docker compose build liefert
+BASIS = {}   # v25: Abbild -> Etikette one.onions.licence-base
 GEISTER = set()   # v19: Kennungen, die docker nicht mehr kennt
 KAPUTT = set()   # v20: Abbilder, deren Container nach dem Start sofort endet
 UNBENENNBAR = set()   # v19: Kennungen, die docker tag nicht findet (hier gebaut, Manifestliste)
@@ -110,8 +112,12 @@ def docker(argv):
         if was == "config":
             return 0, json.dumps(CONFIG)
         if was == "pull":
+            assert ("--ignore-buildable" in a) == any(e.get("build") for e in CONFIG["services"].values()), a
             ZUSTAND["abbilder"].update(ZUSTAND["registry"])
             return 0, "pulled"
+        if was == "build":
+            ZUSTAND["abbilder"].update(GEBAUT)
+            return 0, "built"
         if was in ("stop", "start"):
             for d in dienste:
                 ZUSTAND["container"][d]["zustand"] = "exited" if was == "stop" else "running"
@@ -136,6 +142,8 @@ def docker(argv):
         if rev:
             etiketten.update({"org.opencontainers.image.source": "https://github.com/demo/app",
                               "org.opencontainers.image.revision": rev})
+        if k in BASIS:
+            etiketten[v.LIZENZ_BASIS] = BASIS[k]
         return 0, json.dumps([{"Id": k, "Config": {"Labels": etiketten}}])
     if a[:2] == ["image", "rm"]:
         ZUSTAND["abbilder"].pop(a[2], None)
@@ -452,4 +460,31 @@ schreibe(os.path.join(DBDATEN, "schema.txt"), "schema-neu")
 text, code, erg = v.fuehre_rueckweg_aus(30, "demo", DIENST, "docker-compose.yml", '{"update_job": 29}')
 assert code == 0 and lies(os.path.join(DBDATEN, "schema.txt")) == "schema-alt", text
 assert ZUSTAND["container"]["pg"]["zustand"] == "running", ZUSTAND["container"]
-print("Verwalter v24: 16 cases passed")
+# 17. (v25) app wechselt von gezogen auf hier gebaut: cache wird weiter gezogen, geprueft wird die
+# Lizenz der Grundlage (nie angenommen -> held, der Name zeigt auf das laufende Abbild); nach der
+# Annahme laeuft der Bau, und rollback bringt das gezogene Abbild unter dem neuen Namen zurueck
+ALT = ZUSTAND["container"]["app"]["abbild"]
+CONFIG["services"]["app"].update({"image": "onions-app:latest", "build": {"context": "."}})
+GEBAUT["onions-app:latest"] = "sha256:B1"
+BASIS["sha256:B1"] = "grundlage/app:latest"
+ZUSTAND["etiketten"]["sha256:B1"] = "rev2"
+ZUSTAND["registry"]["valkey:9"] = "sha256:K2"
+ZUSTAND["etiketten"]["sha256:K2"] = "rev2"
+ZUSTAND["angenommen"]["valkey:9"] = {"fingerprint": "sha256:" + v.hashlib.sha256(
+    v._normal(LIZENZ).encode("utf-8")).hexdigest()}
+text, code, erg = v.fuehre_update_aus(31, "demo", DIENST, "docker-compose.yml")
+assert code == v.EXIT_ANGEHALTEN and "Licence grundlage/app:latest: NEVER ACCEPTED" in text, text
+assert ZUSTAND["abbilder"]["onions-app:latest"] == ALT and ZUSTAND["container"]["app"]["abbild"] == ALT, ZUSTAND
+assert erg["dienste"]["cache"]["geaendert"] and erg["dienste"]["app"]["geaendert"], erg
+ZUSTAND["angenommen"]["grundlage/app:latest"] = dict(ZUSTAND["angenommen"]["valkey:9"])
+text, code, erg = v.fuehre_update_aus(32, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and ZUSTAND["container"]["app"]["abbild"] == "sha256:B1", text
+assert ZUSTAND["container"]["cache"]["abbild"] == "sha256:K2", text
+text, code, erg = v.fuehre_rueckweg_aus(33, "demo", DIENST, "docker-compose.yml", '{"update_job": 32}')
+assert code == 0 and ZUSTAND["container"]["app"]["abbild"] == ALT, text
+# ohne die Etikette bleibt es wie bisher: gebaut, keine Lizenzpruefung
+BASIS.clear()
+GEBAUT["onions-app:latest"] = "sha256:B2"
+text, code, erg = v.fuehre_update_aus(34, "demo", DIENST, "docker-compose.yml")
+assert code == 0 and any(z.get("stand") == "gebaut" for z in erg["lizenzen"]), text
+print("Verwalter v25: 17 cases passed")

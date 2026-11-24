@@ -1,4 +1,4 @@
-"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v24)
+"""/opt/<domain>/verwalter.py -- der Verwalter eines Servers (v25)
 
 GAP-ENV-LEITSTELLE-01 Stufe S2: der Toolserver SCHREIBT einen Auftrag in
 public.platform_agent_jobs, dieser Dienst FUEHRT ihn aus. Der Web-Container
@@ -11,6 +11,7 @@ WAS ER KANN (die feste Liste, Stand v8)
              gebaut wird, entscheidet die Compose-Datei selbst:
                * ohne build-Abschnitt "docker compose pull"
                * mit build-Abschnitt   "docker compose build"
+                 (v25: die uebrigen Dienste desselben Stapels werden vorher gezogen)
              Gefragt wird Docker, nicht die Datei von Hand gelesen -- so
              sind Anker, extends und Variablen genauso aufgeloest wie
              spaeter beim Start. Warum das seit v4 so ist: Graphify baut
@@ -205,6 +206,13 @@ Hauptversion die Datenbank in nextcloud-db um, deren Abbild bleibt. Ein
 Rueckweg haette alte Dateien neben eine umgebaute Datenbank gelegt. Seitdem
 werden auch die Dienste angehalten und gesichert, von denen ein geaenderter
 abhaengt (depends_on, auch mittelbar); rollback spielt sie alle zurueck.
+v25 (2026-11-24, Bediener: eigenes Abbild fuer Pipelines, weil das gezogene auf einem
+Debian mit ausgenutzten Luecken steht): ein Stapel darf gezogene und hier gebaute
+Dienste mischen. Bis v24 wurde bei EINEM build-Abschnitt nur gebaut -- die uebrigen
+Dienste bekamen nie wieder ein neues Abbild. Seit v25 wird erst gezogen
+(--ignore-buildable), dann gebaut. Ein gebautes Abbild mit der Etikette
+one.onions.licence-base wird auf die Lizenz seiner Grundlage geprueft. Wechselt ein
+Dienst auf "gebaut", zeigt der neue Name vorher auf das laufende Abbild (Rueckweg).
 
 EIN STAND DES HERSTELLERS (v16, 2026-11-03, GAP-ENV-UPDATES-GITHUB-QUELLE-01 Stufe 2).
 Bediener 2026-11-01: der Updatestatus kommt ueber die Lizenzpruefung -- seit
@@ -740,6 +748,9 @@ def _lauf(text, schritt, verzeichnis, timeout):
     return -1 if code is None else code
 
 
+#: v25: Etikette eines hier gebauten Abbilds: der Name des gezogenen Abbilds, auf dem es aufbaut.
+LIZENZ_BASIS = "one.onions.licence-base"
+
 #: v19: Kennung -> Name, unter dem das Abbild vor dem Holen/Bauen festgehalten wurde. Ein HIER
 #: gebautes Abbild (buildx mit Attestierung) traegt als Kennung die seiner Manifestliste, und
 #: "docker tag <kennung>" findet es unter dem containerd-Speicher nicht (Auftraege #1603, #1607
@@ -764,6 +775,16 @@ def _vorab_benennen(job_id, key, vorher, text):
             _VORAB[kennung] = name
             namen.append(name)
     return namen
+
+
+def _namen_fuer_gebaute(dienste, alt, text):
+    """v25: ein Dienst, der von "gezogen" auf "hier gebaut" wechselt, hat unter seinem neuen
+    Namen noch kein Abbild. Der Name zeigt darum zuerst auf das Abbild, mit dem sein Container
+    laeuft -- sonst faende der Rueckweg des ersten Baus keinen alten Stand."""
+    for d, e in sorted(dienste.items()):
+        kennung = (alt.get(d) or {}).get("abbild")
+        if e["baut"] and kennung and _abbild(e["ref"]) is None:
+            _lauf(text, ["docker", "tag", kennung, e["ref"]], "/", 60)
 
 
 def _namen_zurueck(vorher, text):
@@ -922,13 +943,22 @@ def _lizenzen_pruefen(dienste, geaendert, ergebnis, text):
     angenommene. grund: ein technischer Fehler, das Update endet als failed."""
     angehalten = False
     for ref in sorted({dienste[d]["ref"] for d in geaendert}):
-        if any(dienste[d]["baut"] for d in geaendert if dienste[d]["ref"] == ref):
+        gebaut = any(dienste[d]["baut"] for d in geaendert if dienste[d]["ref"] == ref)
+        abbild = _abbild(ref) or {}
+        # v25: ein gebautes Abbild, das seine Grundlage nennt, erbt deren Etiketten (Quelle und
+        # Fassung) -- geprueft und angenommen wird die Lizenz der Grundlage, unter deren Namen.
+        basis = (((abbild.get("Config") or {}).get("Labels") or {}).get(LIZENZ_BASIS) or "").strip()
+        if gebaut and not basis:
             ergebnis["lizenzen"].append({"ref": ref, "stand": "gebaut"})
             text.append("Licence %s: built on this server -- pulled images are checked; "
                         "what a build brings in is set by its Dockerfile." % ref)
             continue
+        if gebaut:
+            text.append("Licence %s: built on this server on top of %s -- the licence of that image is checked."
+                        % (ref, basis))
+            ref = basis
         zeile = _registerzeile(ref)
-        lizenz, grund = _lizenz_lesen(_abbild(ref) or {}, zeile[2] if zeile else "")
+        lizenz, grund = _lizenz_lesen(abbild, zeile[2] if zeile else "")
         if grund:
             return angehalten, "The licence of %s could not be read: %s" % (ref, grund)
         vorige = _angenommen(ref)
@@ -1277,13 +1307,21 @@ def _update_lauf(job_id, key, service_dir, compose_file, vorab):
     if grund:
         return grund, 1, None
     refs = sorted({e["ref"] for e in dienste.values()})
+    _namen_fuer_gebaute(dienste, alt, text)
     vorher = {ref: (_abbild(ref) or {}).get("Id") for ref in refs}
     vorab.extend(_vorab_benennen(job_id, key, vorher, text))
     ergebnis = {"art": "update", "projekt": projekt, "dienste": {}, "lizenzen": []}
     if any(e["baut"] for e in dienste.values()):
         text.append("The compose file has a build section: the image is built on this\n"
                     "server, not pulled from a registry.")
-        code = _lauf(text, ["docker", "compose", "-f", compose_file, "build"], verzeichnis, BAU_TIMEOUT)
+        code = 0
+        if not all(e["baut"] for e in dienste.values()):
+            # v25: gemischter Stapel -- die Dienste ohne build-Abschnitt werden weiter gezogen
+            text.append("The other services of this stack have no build section: their images are pulled.")
+            code = _lauf(text, ["docker", "compose", "-f", compose_file, "pull", "--quiet",
+                                "--ignore-buildable"], verzeichnis, ZIEH_TIMEOUT)
+        if code == 0:
+            code = _lauf(text, ["docker", "compose", "-f", compose_file, "build"], verzeichnis, BAU_TIMEOUT)
     else:
         text.append("No build section: the image is pulled. Nothing is started yet.")
         # --quiet: ohne Fortschrittsanzeige -- sie fuellte das Ergebnis von Auftrag #320
@@ -2076,7 +2114,7 @@ def bearbeite(auftrag):
         lauf = lambda: fuehre_systemupdate_aus(job_id, params_text)  # noqa: E731
     else:
         schliesse_ab(job_id, "failed",
-                     "Unknown action '%s' -- v24 knows 'update', 'rollback', 'restart', 'backup', "
+                     "Unknown action '%s' -- v25 knows 'update', 'rollback', 'restart', 'backup', "
                      "'setup', 'probe', 'module', 'module_remove', 'host', 'release' and 'os_update'."
                      % action, None)
         return
@@ -2106,7 +2144,7 @@ def eigene_datei_geaendert(stand):
 
 def main():
     stand = os.stat(EIGENE_DATEI).st_mtime
-    log("verwalter.py v24 started, polling every %ss" % POLL_SECONDS)
+    log("verwalter.py v25 started, polling every %ss" % POLL_SECONDS)
     aufgenommen = False
     while True:
         try:
