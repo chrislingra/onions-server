@@ -48,8 +48,8 @@ readonly TOOLSERVER_DIR="/opt/toolserver"
 readonly GUARD="${TOOLSERVER_DIR}/services/svc_urlguard.py"
 
 # Image and pip version of playwright must match: the browsers are in the image, the
-# Python package comes by pip. Both 1.49.0.
-readonly PW_VERSION="1.49.0"
+# Python package comes by pip. Both PW_VERSION (1.65.2, raised from 1.49.0 on 2026-11-24: exploited findings in brotli, git and kmod).
+readonly PW_VERSION="1.65.2"
 readonly IMAGE="mcr.microsoft.com/playwright/python:v${PW_VERSION}-noble"
 
 PURGE=0
