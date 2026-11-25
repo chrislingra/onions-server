@@ -143,7 +143,7 @@ services:
       start_period: 60s
 
   gotenberg:
-    image: gotenberg/gotenberg:8
+    image: gotenberg/gotenberg:9
     container_name: gotenberg
     restart: always
     networks: [traefik_web]
