@@ -153,7 +153,7 @@ services:
     command:
       - gotenberg
       - --chromium-disable-javascript=true
-      - --chromium-allow-list=file:///tmp/.*
+      - --chromium-allow-list=^file:///tmp/.*
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
       interval: 20s
